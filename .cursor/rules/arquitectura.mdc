@@ -1,0 +1,11 @@
+---
+description: 
+alwaysApply: true
+---
+
+- `paginas/`: solo Flet + `app.container` / casos de uso; **no** importar repositorios concretos ni módulos de `infrastructure` (solo puertos vía casos de uso).
+- `application/`: puertos + casos de uso; **no** importar `infrastructure`.
+- `domain/`: entidades y value objects; sin Flet ni BD.
+- `infrastructure/repositories/`: implementan puertos; SQL compartido en `infrastructure/persistence/firebird/*_persistencia.py` cuando aplique.
+- Nuevas features: puerto → repo → registrar en `composition/app_container.py`.
+- Detalle: `docs/ARQUITECTURA.md`.

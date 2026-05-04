@@ -1,0 +1,4 @@
+flet
+flet-datatable2
+firebirdsql
+reportlab

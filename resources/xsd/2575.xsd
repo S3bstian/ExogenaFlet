@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified"
+attributeFormDefault="unqualified">
+<xs:element name="donaciones">
+<xs:annotation>
+<xs:documentation>Donaciones recibidas y certificadas por entidades no contribuyentes</xs:documentation>
+</xs:annotation>
+<xs:complexType>
+<xs:attribute name="formdon" use="required">
+<xs:annotation>
+<xs:documentation>Forma de donación</xs:documentation>
+</xs:annotation>
+<xs:simpleType>
+<xs:restriction base="xs:int">
+<xs:pattern value="[0-9]{1}"/>
+</xs:restriction>
+</xs:simpleType>
+</xs:attribute>
+<xs:attribute name="mondon" use="required">
+<xs:annotation>
+<xs:documentation>Monto de la donación</xs:documentation>
+</xs:annotation>
+<xs:simpleType>
+<xs:restriction base="xs:long">
+<xs:pattern value="[0-9]{1,18}"/>
+</xs:restriction>
+</xs:simpleType>
+</xs:attribute>
+<xs:attribute name="tipopers" use="required">
+<xs:annotation>
+<xs:documentation>Tipo de persona donante</xs:documentation>
+</xs:annotation>
+<xs:simpleType>
+<xs:restriction base="xs:int">
+<xs:pattern value="[0-9]{1}"/>
+</xs:restriction>
+</xs:simpleType>
+</xs:attribute>
+<xs:attribute name="tipodoc" use="required">
+<xs:annotation>
+<xs:documentation>Tipo documento</xs:documentation>
+</xs:annotation>
+<xs:simpleType>
+<xs:restriction base="xs:int">
+<xs:pattern value="[0-9]{0,2}"/>
+</xs:restriction>
+</xs:simpleType>
+</xs:attribute>
+<xs:attribute name="nid" use="required">
+<xs:annotation>
+<xs:documentation>Número de documento de identificación</xs:documentation>
+</xs:annotation>
+<xs:simpleType>
+<xs:restriction base="xs:string">
+<xs:pattern value="[a-zA-Z0-9]+"/>
+<xs:minLength value="1"/>
+<xs:maxLength value="20"/>
+</xs:restriction>
+</xs:simpleType>
+</xs:attribute>
+<xs:attribute name="priapell" use="optional">
+<xs:annotation>
+<xs:documentation>Primer apellido</xs:documentation>
+</xs:annotation>
+<xs:simpleType>
+<xs:restriction base="xs:string">
+<xs:minLength value="0"/>
+<xs:maxLength value="60"/>
+</xs:restriction>
+</xs:simpleType>
+</xs:attribute>
+<xs:attribute name="segapell" use="optional">
+<xs:annotation>
+<xs:documentation>Segundo apellido</xs:documentation>
+</xs:annotation>
+<xs:simpleType>
+<xs:restriction base="xs:string">
+<xs:minLength value="0"/>
+<xs:maxLength value="60"/>
+</xs:restriction>
+</xs:simpleType>
+</xs:attribute>
+<xs:attribute name="prinom" use="optional">
+<xs:annotation>
+<xs:documentation>Primer nombre</xs:documentation>
+</xs:annotation>
+<xs:simpleType>
+<xs:restriction base="xs:string">
+<xs:minLength value="0"/>
+<xs:maxLength value="60"/>
+</xs:restriction>
+</xs:simpleType>
+</xs:attribute>
+<xs:attribute name="otronom" use="optional">
+<xs:annotation>
+<xs:documentation>Otros nombres</xs:documentation>
+</xs:annotation>
+<xs:simpleType>
+<xs:restriction base="xs:string">
+<xs:minLength value="0"/>
+<xs:maxLength value="60"/>
+</xs:restriction>
+</xs:simpleType>
+</xs:attribute>
+<xs:attribute name="raz" use="optional">
+<xs:annotation>
+<xs:documentation>Razón social</xs:documentation>
+</xs:annotation>
+<xs:simpleType>
+<xs:restriction base="xs:string">
+<xs:minLength value="0"/>
+<xs:maxLength value="450"/>
+</xs:restriction>
+</xs:simpleType>
+</xs:attribute>
+</xs:complexType>
+</xs:element>
+<xs:element name="mas">
+<xs:annotation>
+<xs:documentation>Elemento raiz del xml de carga masiva</xs:documentation>
+</xs:annotation>
+<xs:complexType>
+<xs:sequence>
+<xs:element name="Cab" type="CabType"/>
+<xs:element ref="donaciones" maxOccurs="unbounded"/>
+</xs:sequence>
+<xs:unique name="donacionesUnico">
+<xs:selector xpath="donaciones"/>
+<xs:field xpath="@nid"/>
+</xs:unique>
+</xs:complexType>
+</xs:element>
+<xs:complexType name="CabType">
+<xs:sequence>
+<xs:element name="Ano" type="xs:gYear" nillable="false">
+<xs:annotation>
+<xs:documentation>Año de envío</xs:documentation>
+</xs:annotation>
+<xs:simpleType>
+<xs:restriction base="xs:gYear">
+<xs:minInclusive value="2000"/>
+<xs:maxInclusive value="2020"/>
+</xs:restriction>
+</xs:simpleType>
+</xs:element>
+<xs:element name="CodCpt" nillable="false">
+<xs:annotation>
+<xs:documentation>Concepto</xs:documentation>
+</xs:annotation>
+<xs:simpleType>
+<xs:restriction base="xs:int">
+<xs:minInclusive value="0"/>
+<xs:maxInclusive value="99"/>
+</xs:restriction>
+</xs:simpleType>
+</xs:element>
+<xs:element name="Formato" fixed="2575">
+<xs:simpleType>
+<xs:restriction base="xs:positiveInteger"/>
+</xs:simpleType>
+</xs:element>
+<xs:element name="Version" type="xs:positiveInteger" fixed="1"/>
+<xs:element name="NumEnvio">
+<xs:annotation>
+<xs:documentation>Número de envío</xs:documentation>
+</xs:annotation>
+<xs:simpleType>
+<xs:restriction base="xs:positiveInteger">
+<xs:totalDigits value="8"/>
+<xs:maxInclusive value="99999999"/>
+</xs:restriction>
+</xs:simpleType>
+</xs:element>
+<xs:element name="FecEnvio" type="xs:dateTime">
+<xs:annotation>
+<xs:documentation>Fecha de envío</xs:documentation>
+</xs:annotation>
+</xs:element>
+<xs:element name="FecInicial" type="xs:date">
+<xs:annotation>
+<xs:documentation>Fecha inicial</xs:documentation>
+</xs:annotation>
+</xs:element>
+<xs:element name="FecFinal" type="xs:date">
+<xs:annotation>
+<xs:documentation>Fecha Final</xs:documentation>
+</xs:annotation>
+</xs:element>
+<xs:element name="ValorTotal" type="xs:double">
+<xs:annotation>
+<xs:documentation>Valor Total</xs:documentation>
+</xs:annotation>
+</xs:element>
+<xs:element name="CantReg">
+<xs:annotation>
+<xs:documentation>Cantidad de registros</xs:documentation>
+</xs:annotation>
+<xs:simpleType>
+<xs:restriction base="xs:positiveInteger">
+<xs:totalDigits value="4"/>
+<xs:maxInclusive value="9999"/>
+</xs:restriction>
+</xs:simpleType>
+</xs:element>
+</xs:sequence>
+</xs:complexType>
+</xs:schema>
+
