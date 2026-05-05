@@ -81,6 +81,11 @@ class InformacionExogenaApp:
 
     def _crear_controles_base(self) -> None:
         """Construye controles reutilizables en todas las rutas."""
+        self.msg = ft.Container(
+            content=ft.Text("", color=ft.Colors.GREY_600, visible=False),
+            bgcolor=FONDO_PAGINA,
+            alignment=ft.Alignment(0, -1),
+        )
         self.login_button = ft.TextButton(content="Iniciar Sesión", on_click=self.login, icon=ft.Icons.SUPERVISED_USER_CIRCLE_OUTLINED, style=BOTON_PRINCIPAL, visible=False)
         self.logo_helisa = ft.Image(
             src=IMG_PATH + "/helisa.png",
