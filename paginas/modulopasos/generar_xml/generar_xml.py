@@ -998,29 +998,22 @@ class GenerarXmlPage(ft.Column):
 
     def _mostrar_mensaje(self, texto, duration):
         mostrar_mensaje_overlay(self._page, texto, duration, size=14)
-    
-    async def _ejecutar_guardar_unico_async_wrapper(self):
-        """
-        Wrapper async para ejecutar el guardado único desde el thread principal.
-        """
-        # Pequeña pausa para asegurar que el overlay del diálogo se limpie completamente
-        import asyncio
+
+    async def _esperar_overlay_estable(self) -> None:
+        """Da tiempo al UI thread para estabilizar overlays antes de abrir FilePicker."""
         await asyncio.sleep(0.1)
         self._page.update()
-        
+
+    async def _ejecutar_guardar_unico_async_wrapper(self):
+        """Wrapper async para ejecutar el guardado único desde el thread principal."""
+        await self._esperar_overlay_estable()
         nombre_archivo = self._nombre_archivo_temp
         xml_data = self._xmls_generados_temp[0]
         await self._abrir_filepicker_guardar(xml_data, nombre_archivo)
-    
+
     async def _ejecutar_guardar_multiples_async_wrapper(self):
-        """
-        Wrapper async para ejecutar el guardado múltiple desde el thread principal.
-        """
-        # Pequeña pausa para asegurar que el overlay del diálogo se limpie completamente
-        import asyncio
-        await asyncio.sleep(0.1)
-        self._page.update()
-        
+        """Wrapper async para ejecutar el guardado múltiple desde el thread principal."""
+        await self._esperar_overlay_estable()
         await self._guardar_multiples_archivos_async(
             self._xmls_generados_temp,
             self._concepto_codigo_temp,
@@ -1032,9 +1025,7 @@ class GenerarXmlPage(ft.Column):
 
     async def _ejecutar_guardar_pdf_async_wrapper(self):
         """Wrapper async para ejecutar el guardado de PDF desde el thread principal."""
-        import asyncio
-        await asyncio.sleep(0.1)
-        self._page.update()
+        await self._esperar_overlay_estable()
         await self._abrir_filepicker_guardar_pdf(self._pdf_validacion_temp, self._pdf_validacion_nombre_temp)
 
 
@@ -1129,130 +1120,152 @@ class GenerarXmlPage(ft.Column):
             mensaje = f"Se generaron {len(xmls_generados)} archivo(s) XML. {archivos_guardados} guardados, {archivos_error} errores ({total_registros} registros)."
             self._mostrar_mensaje(mensaje, 5000)
         self._page.update()
-    
+
+    def _normalizar_concepto_codigo(self, concepto: str) -> str:
+        """Convierte etiquetas de concepto a códigos esperados por nombre de archivo."""
+        if concepto == "Insercion":
+            return "01"
+        if concepto == "Reemplazo":
+            return "02"
+        return concepto or "01"
+
+    def _construir_metadatos_archivo_xml(self, datos_cab: dict) -> dict:
+        """Prepara metadatos base para nombre de archivo XML."""
+        concepto_codigo = self._normalizar_concepto_codigo(datos_cab.get("concepto", "01"))
+        formato_codigo = str(self.selected_formato_nombre).zfill(5)
+        version = str(datos_cab.get("version", "")).zfill(2)
+        fecha_envio = datos_cab.get("fechaenvio", "")
+        año = fecha_envio[:4] if len(fecha_envio) >= 4 else str(PERIODO)
+        numenvio = str(datos_cab.get("numenvio", "")).zfill(8)
+        return {
+            "concepto_codigo": concepto_codigo,
+            "formato_codigo": formato_codigo,
+            "version": version,
+            "año": año,
+            "numenvio": numenvio,
+        }
+
+    def _programar_guardado_xml(self, xmls_generados, metadata: dict) -> None:
+        """Programa guardado único/múltiple de XML en el thread principal."""
+        self._xmls_generados_temp = xmls_generados
+        self._concepto_codigo_temp = metadata["concepto_codigo"]
+        self._formato_codigo_temp = metadata["formato_codigo"]
+        self._version_temp = metadata["version"]
+        self._año_temp = metadata["año"]
+        self._numenvio_temp = metadata["numenvio"]
+
+        if len(xmls_generados) > 1:
+            self._page.run_task(self._ejecutar_guardar_multiples_async_wrapper)
+            return
+
+        self._nombre_archivo_temp = (
+            f"Dmuisca_{metadata['concepto_codigo']}{metadata['formato_codigo']}"
+            f"{metadata['version']}{metadata['año']}{metadata['numenvio']}.xml"
+        )
+        self._page.run_task(self._ejecutar_guardar_unico_async_wrapper)
+
+    def _obtener_datos_hoja_para_generar(self):
+        """Obtiene cache de hoja preparada para generar XML si existe contexto validado."""
+        if not self._cache_datos_hoja:
+            return None
+        return self._generar_xml_uc.obtener_hoja_para_generar(
+            self.selected_formato_nombre,
+            rows=self._cache_datos_hoja,
+        )
+
+    def _generar_xml_worker(self) -> None:
+        """Ejecuta generación de XML en hilo de trabajo y agenda guardado en UI thread."""
+        try:
+            datos_cab = self._datos_cabecera()
+            self._generar_xml_uc.actualizar_formato(self.campos_modificar, self.selected_formato[1])
+            datos_hoja = self._obtener_datos_hoja_para_generar()
+            xmls_generados = self._generar_xml_uc.generar_xml_formato(
+                self.selected_formato_nombre,
+                datos_cab,
+                orden_atributos=self._cache_xsd["orden"],
+                elemento_detalle=self._cache_xsd["elemento_detalle"],
+                datos_hoja=datos_hoja,
+            )
+        except Exception as ex:
+            import traceback
+            traceback.print_exc()
+            loader_row_fin(self._page, self.loader)
+            self._mostrar_mensaje(f"Error al generar XML: {ex}", 5000)
+            return
+
+        if not xmls_generados:
+            loader_row_fin(self._page, self.loader)
+            self._mostrar_mensaje("Error: No se pudo generar ningún archivo XML.", 5000)
+            return
+
+        loader_row_fin(self._page, self.loader)
+        metadata = self._construir_metadatos_archivo_xml(datos_cab)
+        self._programar_guardado_xml(xmls_generados, metadata)
+
+    def _iniciar_generacion_xml(self) -> None:
+        """Valida formulario/cabecera y dispara generación asíncrona."""
+        if not self._campos_modificar_completos():
+            self._mostrar_mensaje("Complete los campos obligatorios antes de generar el XML.", 4444)
+            return
+        resultado = self._validar_datos_cabecera()
+        if resultado["errores"]:
+            self._mostrar_mensaje("Hay errores en los datos. Revise y corrija antes de generar.", 5000)
+            return
+        loader_row_trabajo(self._page, self.loader, None, "Generando XML...")
+        self._page.run_thread(self._generar_xml_worker)
+
+    def _obtener_cantidad_registros_cache(self) -> int:
+        """Cuenta registros que se usarán para generar XML desde cache de hoja."""
+        if not (hasattr(self, "_cache_datos_hoja") and self._cache_datos_hoja):
+            return 0
+        datos_hoja = self._generar_xml_uc.obtener_hoja_para_generar(
+            self.selected_formato_nombre,
+            rows=self._cache_datos_hoja,
+        )
+        return len(datos_hoja) if datos_hoja else 0
+
+    @staticmethod
+    def _crear_advertencia_particion_xml(cantidad_registros: int):
+        """Construye aviso cuando el volumen requiere múltiples archivos XML."""
+        num_archivos = (cantidad_registros + 4999) // 5000
+        return ft.Container(
+            content=ft.Row(
+                [
+                    ft.Icon(ft.Icons.INFO_OUTLINE, color=ft.Colors.AMBER, size=20),
+                    ft.Text(
+                        f"Se detectaron {cantidad_registros} registros. Se generarán {num_archivos} archivo(s) XML (máximo 5000 por archivo).",
+                        size=13,
+                        color=ft.Colors.AMBER_700,
+                        weight=ft.FontWeight.W_500,
+                    ),
+                ],
+                spacing=8,
+            ),
+            bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.AMBER),
+            padding=12,
+            border_radius=6,
+            border=ft.border.all(1, ft.Colors.AMBER_300),
+        )
 
     # ---------- Paso 2: Generar ----------
     def _render_generar(self):
         if not self.campos_modificar:
             self._build_modificar_form()
-        
-        def generar_xml(e):
-            if not self._campos_modificar_completos():
-                self._mostrar_mensaje("Complete los campos obligatorios antes de generar el XML.", 4444)
-                return
-            resultado = self._validar_datos_cabecera()
-            if resultado["errores"]:
-                self._mostrar_mensaje("Hay errores en los datos. Revise y corrija antes de generar.", 5000)
-                return
 
-            loader_row_trabajo(self._page, self.loader, None, "Generando XML...")
-
-            def generar_worker():
-                try:
-                    datos_cab = self._datos_cabecera()
-                    self._generar_xml_uc.actualizar_formato(
-                        self.campos_modificar, self.selected_formato[1]
-                    )
-                    
-                    datos_hoja = (
-                        self._generar_xml_uc.obtener_hoja_para_generar(
-                            self.selected_formato_nombre, rows=self._cache_datos_hoja
-                        )
-                        if self._cache_datos_hoja else None
-                    )
-                    
-                    xmls_generados = self._generar_xml_uc.generar_xml_formato(
-                        self.selected_formato_nombre,
-                        datos_cab,
-                        orden_atributos=self._cache_xsd["orden"],
-                        elemento_detalle=self._cache_xsd["elemento_detalle"],
-                        datos_hoja=datos_hoja,
-                    )
-                except Exception as ex:
-                    import traceback
-                    traceback.print_exc()
-                    loader_row_fin(self._page, self.loader)
-                    self._mostrar_mensaje(f"Error al generar XML: {ex}", 5000)
-                    return
-                
-                if not xmls_generados:
-                    loader_row_fin(self._page, self.loader)
-                    self._mostrar_mensaje("Error: No se pudo generar ningún archivo XML.", 5000)
-                    return
-
-                loader_row_fin(self._page, self.loader)
-
-                # Preparar nombres base de archivo
-                concepto_codigo = datos_cab.get("concepto", "01")
-                if concepto_codigo == "Insercion":
-                    concepto_codigo = "01"
-                elif concepto_codigo == "Reemplazo":
-                    concepto_codigo = "02"
-                formato_codigo = str(self.selected_formato_nombre).zfill(5)
-                version = str(datos_cab.get("version", "")).zfill(2)
-                fecha_envio = datos_cab.get("fechaenvio", "")
-                año = fecha_envio[:4] if len(fecha_envio) >= 4 else str(PERIODO)
-                numenvio = str(datos_cab.get("numenvio", "")).zfill(8)
-                
-                # Guardar datos para ejecutar FilePicker desde el thread principal
-                self._xmls_generados_temp = xmls_generados
-                self._concepto_codigo_temp = concepto_codigo
-                self._formato_codigo_temp = formato_codigo
-                self._version_temp = version
-                self._año_temp = año
-                self._numenvio_temp = numenvio
-                
-                # Programar ejecución del FilePicker en el thread principal usando page.run_task()
-                # Esto asegura que el FilePicker se ejecute desde el thread principal de Flet
-                if len(xmls_generados) > 1:
-                    self._page.run_task(self._ejecutar_guardar_multiples_async_wrapper)
-                else:
-                    nombre_archivo = f"Dmuisca_{concepto_codigo}{formato_codigo}{version}{año}{numenvio}.xml"
-                    self._nombre_archivo_temp = nombre_archivo
-                    self._page.run_task(self._ejecutar_guardar_unico_async_wrapper)
-
-            # Ejecutar worker en thread separado usando el método de Flet
-            self._page.run_thread(generar_worker)
-        
-        # Cantidad de registros (grupos: misma identidad + distintos valores = distintos reg)
-        cantidad_registros = 0
-        if hasattr(self, "_cache_datos_hoja") and self._cache_datos_hoja:
-            datos_hoja = self._generar_xml_uc.obtener_hoja_para_generar(
-                self.selected_formato_nombre, rows=self._cache_datos_hoja
-            )
-            cantidad_registros = len(datos_hoja) if datos_hoja else 0
+        cantidad_registros = self._obtener_cantidad_registros_cache()
         controles = list(self.campos_modificar.values())
         if cantidad_registros > 5000:
-            num_archivos = (cantidad_registros + 4999) // 5000
-            advertencia = ft.Container(
-                content=ft.Row(
-                    [
-                        ft.Icon(ft.Icons.INFO_OUTLINE, color=ft.Colors.AMBER, size=20),
-                        ft.Text(
-                            f"Se detectaron {cantidad_registros} registros. Se generarán {num_archivos} archivo(s) XML (máximo 5000 por archivo).",
-                            size=13,
-                            color=ft.Colors.AMBER_700,
-                            weight=ft.FontWeight.W_500,
-                        ),
-                    ],
-                    spacing=8,
-                ),
-                bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.AMBER),
-                padding=12,
-                border_radius=6,
-                border=ft.border.all(1, ft.Colors.AMBER_300),
-            )
-            controles.append(advertencia)
-        
+            controles.append(self._crear_advertencia_particion_xml(cantidad_registros))
+
         controles.append(
             ft.ElevatedButton(
                 "Generar XML",
                 icon=ft.Icons.FILE_DOWNLOAD,
                 style=BOTON_PRINCIPAL,
-                on_click=generar_xml,
+                on_click=lambda _e: self._iniciar_generacion_xml(),
             )
         )
-        
+
         return ft.Container(
             content=ft.Column(
                 spacing=12,
