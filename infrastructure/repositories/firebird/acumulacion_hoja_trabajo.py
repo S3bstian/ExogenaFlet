@@ -147,6 +147,132 @@ def _unificar_setsdatos_por_tipo(
     return setsdatos, {}
 
 
+def _obtener_idtercero_por_tipo(tipo_el: str, setdatos: Tuple[Any, ...]) -> Any:
+    """Obtiene identidad/tercero según la estructura del tipo de elemento."""
+    if tipo_el == "T":
+        return _get_or_default(setdatos, 1, "")
+    if tipo_el == "B":
+        return _get_or_default(setdatos, 0, "")
+    if tipo_el == "A":
+        return _get_or_default(setdatos, 3, "")
+    tercero = _get_or_default(setdatos, 3, "")
+    return tercero if tercero else _get_or_default(setdatos, 0, "")
+
+
+def _resolver_valor_atributo(
+    tipo_el: str,
+    attr: Tuple[Any, ...],
+    setdatos: Tuple[Any, ...],
+    concepto_codigo: Any,
+    set_idx: int,
+) -> Any:
+    """Resuelve el valor del atributo según reglas de acumulado y tipo de elemento."""
+    sin_valor = "Sin valor"
+    tipo_acumulado = None if attr[5] in {2, 3} else attr[1]
+
+    match tipo_acumulado:
+        case None:
+            return "Sin Valor"
+        case 50:
+            return _get_or_default(setdatos, 0, sin_valor) if tipo_el == "A" else sin_valor
+        case 31:
+            return _get_or_default(setdatos, 15, sin_valor) if tipo_el == "T" else sin_valor
+        case x if x in (1010, 1023, 1067):
+            return _get_or_default(setdatos, 10, sin_valor) if tipo_el == "T" else sin_valor
+        case x if x in (1011, 1024, 1068):
+            return _get_or_default(setdatos, 11, sin_valor) if tipo_el == "T" else sin_valor
+        case 1001:
+            return concepto_codigo
+        case 3:
+            if tipo_el == "T":
+                return _get_or_default(setdatos, 15, sin_valor)
+            if tipo_el in ("C", "A"):
+                return _get_or_default(setdatos, 6, sin_valor)
+            return sin_valor
+        case x if x in (1014, 1052):
+            return _get_or_default(setdatos, 10, sin_valor) if tipo_el == "T" else sin_valor
+        case 2:
+            if tipo_el == "T":
+                return _get_or_default(setdatos, 14, sin_valor)
+            if tipo_el in ("C", "A"):
+                return _get_or_default(setdatos, 5, sin_valor)
+            return sin_valor
+        case x if x in (1013, 1026):
+            if tipo_el == "T":
+                return _get_or_default(setdatos, 3, sin_valor)
+            if tipo_el == "B":
+                return _get_or_default(setdatos, 2, sin_valor)
+            return sin_valor
+        case x if x in (1009, 1051):
+            return _get_or_default(setdatos, 9, sin_valor) if tipo_el == "T" else sin_valor
+        case 1071:
+            if tipo_el == "T":
+                return _get_or_default(setdatos, 1, sin_valor)
+            if tipo_el == "B":
+                return _get_or_default(setdatos, 0, sin_valor)
+            return sin_valor
+        case 61:
+            if tipo_el == "T":
+                return _get_or_default(setdatos, 15, sin_valor)
+            if tipo_el == "C":
+                return _get_or_default(setdatos, 6, sin_valor)
+            return sin_valor
+        case 62:
+            if tipo_el == "T":
+                return _get_or_default(setdatos, 14, sin_valor)
+            if tipo_el == "C":
+                return _get_or_default(setdatos, 5, sin_valor)
+            return sin_valor
+        case x if x in (1015, 1053):
+            return _get_or_default(setdatos, 11, sin_valor) if tipo_el == "T" else sin_valor
+        case x if x in (4, 14):
+            if tipo_el == "T":
+                return _get_or_default(setdatos, 16, sin_valor)
+            if tipo_el == "C":
+                return _get_or_default(setdatos, 7, sin_valor)
+            return sin_valor
+        case 1072:
+            return sin_valor
+        case x if x in (1003, 1017, 1041, 1046, 1056, 1073):
+            if tipo_el == "T":
+                return _get_or_default(setdatos, 1, sin_valor)
+            if tipo_el == "B":
+                return _get_or_default(setdatos, 0, sin_valor)
+            return sin_valor
+        case x if x in (1007, 1021, 1030, 1035, 1040, 1043, 1050, 1060, 1065):
+            return _get_or_default(setdatos, 8, "") if tipo_el == "T" else ""
+        case x if x in (1012, 1025, 1054, 1069):
+            return _get_or_default(setdatos, 12, sin_valor) if tipo_el == "T" else sin_valor
+        case x if x in (1004, 1018, 1027, 1032, 1037, 1047, 1057, 1062):
+            return _get_or_default(setdatos, 5, "") if tipo_el == "T" else ""
+        case x if x in (1006, 1020, 1029, 1034, 1039, 1042, 1049, 1059, 1064):
+            return _get_or_default(setdatos, 7, "") if tipo_el == "T" else ""
+        case x if x in (1008, 1022, 1031, 1036, 1044, 1061, 1066):
+            return _get_or_default(setdatos, 4, "") if tipo_el == "T" else ""
+        case 15:
+            return _get_or_default(setdatos, 8, sin_valor) if tipo_el == "C" else sin_valor
+        case 5:
+            return _get_or_default(setdatos, 17, sin_valor) if tipo_el == "T" else sin_valor
+        case x if x in (1, 11):
+            if tipo_el == "T":
+                return _get_or_default(setdatos, 13, sin_valor)
+            if tipo_el in ("C", "A"):
+                return _get_or_default(setdatos, 4, sin_valor)
+            return sin_valor
+        case 21:
+            return _get_or_default(setdatos, 3, sin_valor) if tipo_el == "B" else sin_valor
+        case x if x in (1005, 1019, 1028, 1033, 1038, 1048, 1058, 1063):
+            return _get_or_default(setdatos, 6, "") if tipo_el == "T" else ""
+        case x if x in (1002, 1016, 1045, 1055, 1070):
+            return _get_or_default(setdatos, 0, sin_valor) if tipo_el == "T" else sin_valor
+        case 51:
+            return _get_or_default(setdatos, 0, sin_valor) if tipo_el == "A" else sin_valor
+        case _:
+            if (set_idx + 1) % 500 == 0:
+                print(f"    [WARNING] Caso no mapeado - ID: {attr[1]}, Desc: {attr[3][:30]}..., Tipo: {tipo_el}")
+            return 0
+
+
 def acumular_conceptos_hoja_trabajo(
     conceptos: List[Dict[str, Any]],
     loader: Any,
@@ -501,253 +627,16 @@ def acumular_conceptos_hoja_trabajo(
                             if idx_attr % 16 == 0:
                                 _raise_if_cancel()
                             if attr[0] not in contattr:
-                                # attr = (id, tipoacumulado, tipocontabilidad, descripcion, codigo_cuenta, clase)
-                                # valor se asigna según tipoacumulado (attr[1]); para T/C se usa setdatos[índice]
-                                # Mensaje cuando el tipo de elemento no aporta dato (FORMAACUMULADO / UI global).
-                                _no = f"Sin valor"
-                                def _get(idx: int):
-                                    return _get_or_default(setdatos, idx, _no)
-
-                                # Regla de negocio: atributos clase 3 son manuales en hoja.
-                                match None if attr[5] in set([2,3]) else attr[1]:
-                                    case None:
-                                        valor = "Sin Valor"
-                                    # ==================== ACUMULADO PARA ACTIVOS FIJOS ====================
-                                    # IDs: 50
-                                    case 50:
-                                        if tipo_el == 'A':
-                                            valor = _get_or_default(setdatos, 0, _no)  # codigo
-                                        else:
-                                            valor = _no
-                                    # ==================== BASE DE RETENCIONES ====================
-                                    # IDs: 31
-                                    case 31:
-                                        if tipo_el == 'T':
-                                            valor = _get_or_default(setdatos, 15, _no)  # creditos
-                                        else:
-                                            valor = _no
-                                    # ==================== CÓDIGO DEL DEPARTAMENTO ====================
-                                    # IDs: 1010, 1023, 1067
-                                    case x if x in (1010, 1023, 1067):
-                                        if tipo_el == 'T':
-                                            valor = _get_or_default(setdatos, 10, _no)  # departamento
-                                        else:
-                                            valor = _no
-                                    # ==================== CÓDIGO DEL MUNICIPIO ====================
-                                    # IDs: 1011, 1024, 1068
-                                    case x if x in (1011, 1024, 1068):
-                                        if tipo_el == 'T':
-                                            valor = _get_or_default(setdatos, 11, _no)  # municipio
-                                        else:
-                                            valor = _no
-                                    # ==================== CONCEPTO ====================
-                                    # IDs: 1001
-                                    case 1001:
-                                        valor = concepto.get("codigo")
-                                    # ==================== CRÉDITOS ====================
-                                    # IDs: 3
-                                    case 3:
-                                        if tipo_el == 'T':
-                                            valor = _get_or_default(setdatos, 15, _no)  # creditos
-                                        elif tipo_el == 'C':
-                                            valor = _get_or_default(setdatos, 6, _no)  # creditos
-                                        elif tipo_el == 'A':
-                                            valor = _get_or_default(setdatos, 6, _no)  # creditos
-                                        else:
-                                            valor = _no
-                                    # ==================== DEPARTAMENTO ====================
-                                    # IDs: 1014, 1052
-                                    case x if x in (1014, 1052):
-                                        if tipo_el == 'T':
-                                            valor = _get_or_default(setdatos, 10, _no)  # departamento
-                                        else:
-                                            valor = _no
-                                    # ==================== DÉBITOS ====================
-                                    # IDs: 2
-                                    case 2:
-                                        if tipo_el == 'T':
-                                            valor = _get_or_default(setdatos, 14, _no)  # debitos
-                                        elif tipo_el == 'C':
-                                            valor = _get_or_default(setdatos, 5, _no)  # debitos
-                                        elif tipo_el == 'A':
-                                            valor = _get_or_default(setdatos, 5, _no)  # debitos
-                                        else:
-                                            valor = _no
-                                    # ==================== DÍGITO DE VERIFICACIÓN ====================
-                                    # IDs: 1013, 1026
-                                    case x if x in (1013, 1026):
-                                        if tipo_el == 'T':
-                                            valor = _get(3)  # digitoverificacion
-                                        elif tipo_el == 'B':
-                                            valor = _get(2)  # verificacion
-                                        else:
-                                            valor = _no
-                                    # ==================== DIRECCIÓN ====================
-                                    # IDs: 1009, 1051
-                                    case x if x in (1009, 1051):
-                                        if tipo_el == 'T':
-                                            valor = _get(9)  # direccion
-                                        else:
-                                            valor = _no
-                                    # ==================== IDENTIFICACIÓN PARTICIPANTE EN CONTRATO ====================
-                                    # IDs: 1071
-                                    case 1071:
-                                        if tipo_el == 'T':
-                                            valor = _get(1)  # identidad
-                                        elif tipo_el == 'B':
-                                            valor = _get(0)  # identidad
-                                        else:
-                                            valor = _no
-                                    # ==================== IVA COMPRAS DEL MÓDULO DE GESTIÓN DE COMPRAS ====================
-                                    # IDs: 61
-                                    case 61:
-                                        if tipo_el == 'T':
-                                            valor = _get(15)  # creditos
-                                        elif tipo_el == 'C':
-                                            valor = _get(6)  # creditos
-                                        else:
-                                            valor = _no
-                                    # ==================== IVA VENTAS DEL MÓDULO DE GESTIÓN DE VENTAS ====================
-                                    # IDs: 62
-                                    case 62:
-                                        if tipo_el == 'T':
-                                            valor = _get(14)  # debitos
-                                        elif tipo_el == 'C':
-                                            valor = _get(5)  # debitos
-                                        else:
-                                            valor = _no
-                                    # ==================== MUNICIPIO ====================
-                                    # IDs: 1015, 1053
-                                    case x if x in (1015, 1053):
-                                        if tipo_el == 'T':
-                                            valor = _get(11)  # municipio
-                                        else:
-                                            valor = _no
-                                    # ==================== NETO ====================
-                                    # IDs: 4, 14
-                                    case x if x in (4, 14):
-                                        if tipo_el == 'T':
-                                            valor = _get(16)  # neto
-                                        elif tipo_el == 'C':
-                                            valor = _get(7)  # neto
-                                        else:
-                                            valor = _no
-                                    # ==================== NÚMERO DE CONTRATO ====================
-                                    # IDs: 1072
-                                    case 1072:
-                                        valor = _no
-                                    # ==================== NÚMERO DE IDENTIFICACIÓN ====================
-                                    # IDs: 1003, 1017, 1041, 1046, 1056, 1073
-                                    case x if x in (1003, 1017, 1041, 1046, 1056, 1073):
-                                        if tipo_el == 'T':
-                                            valor = _get(1)  # identidad
-                                        elif tipo_el == 'B':
-                                            valor = _get(0)  # identidad
-                                        else:
-                                            valor = _no
-                                    # ==================== OTROS NOMBRES ====================
-                                    # IDs: 1007, 1021, 1030, 1035, 1040, 1043, 1050, 1060, 1065
-                                    case x if x in (1007, 1021, 1030, 1035, 1040, 1043, 1050, 1060, 1065):
-                                        if tipo_el == 'T':
-                                            valor = _get(8)  # otros nombres
-                                        else:
-                                            valor = ""
-                                    # ==================== PAÍS ====================
-                                    # IDs: 1012, 1025, 1054, 1069
-                                    case x if x in (1012, 1025, 1054, 1069):
-                                        if tipo_el == 'T':
-                                            valor = _get(12)  # pais
-                                        else:
-                                            valor = _no
-                                    # ==================== PRIMER APELLIDO ====================
-                                    # IDs: 1004, 1018, 1027, 1032, 1037, 1047, 1057, 1062
-                                    case x if x in (1004, 1018, 1027, 1032, 1037, 1047, 1057, 1062):
-                                        if tipo_el == 'T':
-                                            valor = _get(5)  # primerapellido
-                                        else:
-                                            valor = ""
-                                    # ==================== PRIMER NOMBRE ====================
-                                    # IDs: 1006, 1020, 1029, 1034, 1039, 1042, 1049, 1059, 1064
-                                    case x if x in (1006, 1020, 1029, 1034, 1039, 1042, 1049, 1059, 1064):
-                                        if tipo_el == 'T':
-                                            valor = _get(7)  # primernombre
-                                        else:
-                                            valor = ""
-                                    # ==================== RAZÓN SOCIAL ====================
-                                    # IDs: 1008, 1022, 1031, 1036, 1044, 1061, 1066
-                                    case x if x in (1008, 1022, 1031, 1036, 1044, 1061, 1066):
-                                        if tipo_el == 'T':
-                                            valor = _get(4)  # razonsocial
-                                        else:
-                                            valor = ""
-                                    # ==================== SALDO DE LA CUENTA ====================
-                                    # IDs: 15
-                                    case 15:
-                                        if tipo_el == 'C':
-                                            valor = _get(8)  # saldofinal
-                                        else:
-                                            valor = _no
-                                    # ==================== SALDO DEL TERCERO ====================
-                                    # IDs: 5
-                                    case 5:
-                                        if tipo_el == 'T':
-                                            valor = _get(17)  # saldofinal
-                                        else:
-                                            valor = _no
-                                    # ==================== SALDO INICIAL ====================
-                                    # IDs: 1, 11
-                                    case x if x in (1, 11):
-                                        if tipo_el == 'T':
-                                            valor = _get(13)  # saldoinicial
-                                        elif tipo_el == 'C':
-                                            valor = _get(4)  # saldoinicial
-                                        elif tipo_el == 'A':
-                                            valor = _get(4)  # saldoinicial
-                                        else:
-                                            valor = _no
-                                    # ==================== SALDO POR BANCO ====================
-                                    # IDs: 21
-                                    case 21:
-                                        if tipo_el == 'B':
-                                            valor = _get(3)  # saldo
-                                        else:
-                                            valor = _no
-                                    # ==================== SEGUNDO APELLIDO ====================
-                                    # IDs: 1005, 1019, 1028, 1033, 1038, 1048, 1058, 1063
-                                    case x if x in (1005, 1019, 1028, 1033, 1038, 1048, 1058, 1063):
-                                        if tipo_el == 'T':
-                                            valor = _get(6)  # segundoapellido
-                                        else:
-                                            valor = ""
-                                    # ==================== TIPO DE DOCUMENTO ====================
-                                    # IDs: 1002, 1016, 1045, 1055, 1070
-                                    case x if x in (1002, 1016, 1045, 1055, 1070):
-                                        if tipo_el == 'T':
-                                            valor = _get(0)  # tipodocumento
-                                        else:
-                                            valor = _no
-                                    # ==================== VALOR DE LOS ACTIVOS FIJOS E INTANGIBLES ====================
-                                    # IDs: 51
-                                    case 51:
-                                        if tipo_el == 'A':
-                                            valor = _get(0)  # codigo
-                                        else:
-                                            valor = _no
-                                    # ==================== CASO POR DEFECTO: ID NO MAPEADO ====================
-                                    case _:
-                                        valor = 0
-                                        if (i + 1) % 500 == 0:
-                                            print(f"    [WARNING] Caso no mapeado - ID: {attr[1]}, Desc: {attr[3][:30]}..., Tipo: {tipo_el}")
+                                valor = _resolver_valor_atributo(
+                                    tipo_el=tipo_el,
+                                    attr=attr,
+                                    setdatos=setdatos,
+                                    concepto_codigo=concepto.get("codigo"),
+                                    set_idx=i,
+                                )
 
                                 # Obtener identidad del tercero según el tipo de elemento
-                                if tipo_el == 'T':
-                                    idtercero = setdatos[1] if len(setdatos) > 1 else ""
-                                elif tipo_el == 'B':
-                                    idtercero = setdatos[0] if len(setdatos) > 0 else ""
-                                elif tipo_el == 'A':
-                                    idtercero = setdatos[3] if len(setdatos) > 3 else ""
-                                else:  # C
-                                    idtercero = setdatos[3] if len(setdatos) > 3 and setdatos[3] else (setdatos[0] if len(setdatos) > 0 else "")
+                                idtercero = _obtener_idtercero_por_tipo(tipo_el, setdatos)
                                 
                                 contattr.append(attr[0])
                                 id_limpio = str(idtercero).strip() if idtercero else ""
