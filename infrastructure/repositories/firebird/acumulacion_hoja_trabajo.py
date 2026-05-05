@@ -996,6 +996,30 @@ def _acumular_resultado_concepto(
     return resultado_concepto["identidades_unificadas"], insert_count
 
 
+def _resultado_error_critico_acumulacion(
+    error: Exception,
+    conceptos: List[Dict[str, Any]],
+    concepto_actual: int,
+    total_conceptos: int,
+    concepto_en_proceso: Optional[Dict[str, Any]],
+) -> ResultadoAcumulacion:
+    """Construye resultado y trazas para un error crítico durante acumulación."""
+    concepto_codigo_actual = (
+        concepto_en_proceso.get("codigo", "N/A")
+        if isinstance(concepto_en_proceso, dict)
+        else "N/A"
+    )
+    print(f"[ERROR CRÍTICO] Concepto {concepto_codigo_actual} ({concepto_actual}/{total_conceptos}): {error}")
+    import traceback
+
+    print(traceback.format_exc())
+    return ResultadoAcumulacion(
+        exito=False,
+        total_conceptos_solicitados=len(conceptos),
+        mensaje_error_critico=str(error),
+    )
+
+
 def acumular_conceptos_hoja_trabajo(
     conceptos: List[Dict[str, Any]],
     loader: Any,
@@ -1068,6 +1092,9 @@ def acumular_conceptos_hoja_trabajo(
 
     # Proteger contra ejecuciones simultáneas
     with proceso_protegido("acumular", f"{len(conceptos)} concepto(s)"):
+        concepto_actual = 0
+        total_conceptos = len(conceptos)
+        concepto_en_proceso: Optional[Dict[str, Any]] = None
         # Envolver todo en una transacción única
         try:
             with transaccion_segura() as (con, cur):
@@ -1083,6 +1110,7 @@ def acumular_conceptos_hoja_trabajo(
                 conceptos_omitidos_sin_elemento: List[str] = []
                 conceptos_sin_cuentas_en_config: List[str] = []
                 conceptos_sin_filas_en_hoja: List[str] = []
+                concepto_en_proceso = None
 
                 # Vacía HOJA_TRABAJO por concepto en esta misma transacción; al cancelar o fallar,
                 # el rollback restaura también lo borrado aquí.
@@ -1096,6 +1124,7 @@ def acumular_conceptos_hoja_trabajo(
 
                 # --------------------------- LOOP PRINCIPAL ---------------------------
                 for concepto in conceptos:
+                    concepto_en_proceso = concepto
                     concepto_actual += 1
                     resultado_concepto = _procesar_concepto_acumulacion(
                         cur=cur,
@@ -1145,15 +1174,10 @@ def acumular_conceptos_hoja_trabajo(
                 )
             raise
         except Exception as e:
-            concepto_codigo_actual = concepto.get("codigo", "N/A") if "concepto" in locals() else "N/A"
-            ca = locals().get("concepto_actual", "?")
-            tc = locals().get("total_conceptos", len(conceptos))
-            print(f"[ERROR CRÍTICO] Concepto {concepto_codigo_actual} ({ca}/{tc}): {e}")
-            import traceback
-
-            print(traceback.format_exc())
-            return ResultadoAcumulacion(
-                exito=False,
-                total_conceptos_solicitados=len(conceptos),
-                mensaje_error_critico=str(e),
+            return _resultado_error_critico_acumulacion(
+                error=e,
+                conceptos=conceptos,
+                concepto_actual=concepto_actual,
+                total_conceptos=total_conceptos,
+                concepto_en_proceso=concepto_en_proceso,
             )
