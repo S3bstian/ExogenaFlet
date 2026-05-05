@@ -170,15 +170,20 @@ class GenerarXmlPage(ft.Column):
             try:
                 self.formatos = self._generar_xml_uc.obtener_formatos()
                 loader_row_fin(self._page, self.loader)
-                if not self.dialog_shown:
-                    self.dialog_shown = True
-                    self._open_dialog_formatos()
+                self._abrir_dialogo_formato_si_aplica()
                 self._refresh_body()
             except Exception as ex:
                 loader_row_fin(self._page, self.loader)
                 self._mostrar_mensaje(f"Error cargando formatos: {ex}", 5000)
             self._page.update()
         self._page.run_thread(_worker)
+
+    def _abrir_dialogo_formato_si_aplica(self) -> None:
+        """Evita mostrar múltiples veces el diálogo inicial de selección."""
+        if self.dialog_shown:
+            return
+        self.dialog_shown = True
+        self._open_dialog_formatos()
 
     # ---------- Diálogo de selección de formato ----------
     def _open_dialog_formatos(self):
@@ -217,28 +222,40 @@ class GenerarXmlPage(ft.Column):
     def _seleccionar_formato(self, formato):
         self._page.pop_dialog()
         loader_row_trabajo(self._page, self.loader, None, "Cargando formato...")
-        formato_codigo = formato[1]
 
         def _worker():
             try:
-                self.selected_formato = formato
-                self.selected_formato_nombre = formato_codigo
-                self._cache_xsd = {
-                    "atributos": self._generar_xml_uc.parsear_xsd(formato_codigo),
-                    "orden": self._generar_xml_uc.obtener_orden_atributos_xsd(formato_codigo),
-                    "elemento_detalle": self._generar_xml_uc.obtener_elemento_detalle_xsd(formato_codigo),
-                }
-                self._resultado_validacion = None
-                self._cache_datos_hoja = None
-                self.label_formato.value = f"Formato seleccionado: {self.selected_formato_nombre}"
-                self.step = 1
-                self.campos_modificar = {}
-                self._build_modificar_form()
-                self._refresh_body()
+                self._aplicar_formato_seleccionado(formato)
             finally:
                 loader_row_fin(self._page, self.loader)
 
         self._page.run_thread(_worker)
+
+    def _aplicar_formato_seleccionado(self, formato) -> None:
+        """Carga metadatos XSD y reinicia el estado de validación para el formato elegido."""
+        formato_codigo = formato[1]
+        self.selected_formato = formato
+        self.selected_formato_nombre = formato_codigo
+        self._cache_xsd = self._cargar_cache_xsd(formato_codigo)
+        self._reiniciar_estado_validacion_formato()
+        self.label_formato.value = f"Formato seleccionado: {self.selected_formato_nombre}"
+        self.step = 1
+        self.campos_modificar = {}
+        self._build_modificar_form()
+        self._refresh_body()
+
+    def _cargar_cache_xsd(self, formato_codigo: str) -> dict:
+        """Obtiene estructura XSD necesaria para validar y construir XML."""
+        return {
+            "atributos": self._generar_xml_uc.parsear_xsd(formato_codigo),
+            "orden": self._generar_xml_uc.obtener_orden_atributos_xsd(formato_codigo),
+            "elemento_detalle": self._generar_xml_uc.obtener_elemento_detalle_xsd(formato_codigo),
+        }
+
+    def _reiniciar_estado_validacion_formato(self) -> None:
+        """Resetea caches del flujo cuando cambia el formato seleccionado."""
+        self._resultado_validacion = None
+        self._cache_datos_hoja = None
 
     # ---------- Construcción de pasos ----------
     def _refresh_body(self):
