@@ -37,10 +37,9 @@ from paginas.licenciamiento.primera_ejecucion import (
 )
 
 
-# Clase app
-class MagneticosApp:
+class InformacionExogenaApp:
     def __init__(self, page):
-        """Define `page`, el contenedor de casos de uso (`AppContainer`) y la navegación (`route_change`, `view_pop`)."""
+        """Inicializa página, contenedor de casos de uso y handlers de navegación."""
         self.page = page
         self.container = AppContainer()
         self._auth_uc = self.container.auth_uc
@@ -50,18 +49,7 @@ class MagneticosApp:
         self.page.on_route_change = self.route_change
         self.page.on_view_pop = self.view_pop
 
-        """Definicion de objetos de interfaz o controles flet
-        login_button = boton de iniciar sesion
-        
-        logo_helisa = imagen del logo corporativo
-        
-        msg = mensaje de alerta en la parte inferior
-        
-        appbar = barra horizontal que al iniciar el programa es la ventana principal pero 
-            al interior del mismo se convierte en la barra de navegacion
-            
-        root = contiene lo que se muestra en pantalla
-        """
+        # Controles base que se reutilizan en todas las vistas.
         self.login_button = ft.TextButton(content="Iniciar Sesión", on_click=self.login, icon=ft.Icons.SUPERVISED_USER_CIRCLE_OUTLINED, style=BOTON_PRINCIPAL, visible=False)
         self.logo_helisa = ft.Image(
             src=IMG_PATH + "/helisa.png",
@@ -99,38 +87,59 @@ class MagneticosApp:
             bgcolor=PINK_50,
             # Permite que el logo de /home (Stack en routing) se pinte fuera del alto fijo del appbar.
             clip_behavior=ft.ClipBehavior.NONE,
-        )            
+        )
+
+    @staticmethod
+    def _set_control_error(control: ft.Control, message: str | None) -> None:
+        """Compatibilidad entre versiones de Flet para mostrar error en campos."""
+        if hasattr(control, "error"):
+            control.error = message
+        if hasattr(control, "error_text"):
+            control.error_text = message
+        if hasattr(control, "update"):
+            control.update()
+
+    @staticmethod
+    def _credenciales_vacias(usuario: ft.TextField, password: ft.TextField) -> bool:
+        """Valida campos obligatorios y marca errores de forma consistente."""
+        usuario_vacio = usuario.value.strip() == ""
+        password_vacio = password.value.strip() == ""
+        if not (usuario_vacio or password_vacio):
+            return False
+
+        InformacionExogenaApp._set_control_error(usuario, "Complete el campo" if usuario_vacio else None)
+        InformacionExogenaApp._set_control_error(password, "Complete el campo" if password_vacio else None)
+        return True
+
+    def _autenticar_credenciales(self, usuario: ft.TextField, password: ft.TextField):
+        """Autentica usuario y devuelve la tupla de sesión o `None`."""
+        return self._auth_uc.autenticar_usuario(
+            usuario.value.strip(),
+            password.value.strip(),
+        )
+
+    def _mostrar_error_credenciales(self, usuario: ft.TextField, password: ft.TextField) -> None:
+        """Informa credenciales inválidas en ambos campos para feedback inmediato."""
+        self._set_control_error(usuario, "Verifique sus credenciales")
+        self._set_control_error(password, "Verifique sus credenciales")
 
     def login(self, e):
-        #crea los controles de campo de texto 
+        """Muestra el diálogo de login y redirige a `/home` al autenticarse."""
         usuario = creador_campo_texto("Ingrese su usuario", ["focus"])
         password = creador_campo_texto("Ingrese su contraseña", ["contraseña"])
         olvido = ft.TextButton(content="¿Olvidó su contraseña?", style=BOTON_SUBLISTA, icon=ft.Icons.LIVE_HELP_SHARP, on_click=lambda e: self.cambio_contra_dialog.open_dialog())
 
-        def close(_):  # Cierra el diálogo y valida credenciales antes de navegar a /home.
-            # Flet 0.80: TextField usa .error (no .error_text) para el mensaje y borde rojo
-            def set_error(c, msg):
-                if hasattr(c, "error"):
-                    c.error = msg
-                if hasattr(c, "error_text"):
-                    c.error_text = msg
-                if hasattr(c, "update"):
-                    c.update()
-            # Campos vacíos
-            if usuario.value.strip() == "" or password.value.strip() == "":
-                set_error(usuario, "Complete el campo" if not usuario.value.strip() else None)
-                set_error(password, "Complete el campo" if not password.value.strip() else None)
+        def close(_):
+            if self._credenciales_vacias(usuario, password):
                 self.page.update()
                 return
-            val_usuario = self._auth_uc.autenticar_usuario(
-                usuario.value.strip(), password.value.strip()
-            )
+
+            val_usuario = self._autenticar_credenciales(usuario, password)
             if not val_usuario:
-                set_error(usuario, "Verifique sus credenciales")
-                set_error(password, "Verifique sus credenciales")
+                self._mostrar_error_credenciales(usuario, password)
                 self.page.update()
                 return
-            
+
             session.USUARIO_ACTUAL = {"id": val_usuario[0], "nombre": val_usuario[1], "email": ""}
             self.page.pop_dialog()  # Flet 0.80: reemplaza dialog.open = False
             self.page.update()
@@ -185,43 +194,45 @@ class MagneticosApp:
             self.appbar.content = appbar_content
             self.page.update()
 
-        async def _build_and_navigate():
-            try:
-                await asyncio.sleep(0)
-                if troute.match("/"):
-                    if self.page.views:
-                        self.page.clean()
-                # Una vista por ruta: evita acumular ft.View y controles al navegar (patrón Flet).
-                self.page.views.clear()
+        self.page.run_task(self._build_and_navigate, troute, res, es_transicion, route)
 
-                if not res:
-                    asyncio.create_task(self.page.push_route("/"))
-                    return
+    async def _build_and_navigate(self, troute, res, es_transicion: bool, route: str | None):
+        """Construye la vista activa para la ruta y ejecuta `on_enter` cuando aplique."""
+        try:
+            await asyncio.sleep(0)
+            if troute.match("/") and self.page.views:
+                self.page.clean()
 
-                content, view_instance = h.build_view(self.page, self)
-                padding = ft.Padding.all(3) if route == "/home/hoja_trabajo" else ft.Padding.all(0)
-                self.page.views.append(
-                    ft.View(
-                        route=route,
-                        controls=[self.appbar, content],
-                        bgcolor=FONDO_PAGINA,
-                        padding=padding,
-                    )
+            # Una vista por ruta: evita acumular ft.View y controles al navegar (patrón Flet).
+            self.page.views.clear()
+
+            if not res:
+                asyncio.create_task(self.page.push_route("/"))
+                return
+
+            _, handler = res
+            content, view_instance = handler.build_view(self.page, self)
+            padding = ft.Padding.all(3) if route == "/home/hoja_trabajo" else ft.Padding.all(0)
+            self.page.views.append(
+                ft.View(
+                    route=route,
+                    controls=[self.appbar, content],
+                    bgcolor=FONDO_PAGINA,
+                    padding=padding,
                 )
-                self.page.update()
-                if h.on_enter:
-                    try:
-                        h.on_enter(self.page, view_instance)
-                    except Exception as ex:
-                        print("Error en on_enter:", ex)
-            except Exception as ex:
-                print(ex)
-            finally:
-                if res and es_transicion:
-                    self._loader_overlay_mostrar(False)
-                self.page.update()
-
-        self.page.run_task(_build_and_navigate)
+            )
+            self.page.update()
+            if handler.on_enter:
+                try:
+                    handler.on_enter(self.page, view_instance)
+                except Exception as ex:
+                    print("Error en on_enter:", ex)
+        except Exception as ex:
+            print(ex)
+        finally:
+            if res and es_transicion:
+                self._loader_overlay_mostrar(False)
+            self.page.update()
 
     def view_pop(self, e):
         """Atrás: subrutas /home/... vuelven a /home (sin depender de la pila de vistas)."""
@@ -232,8 +243,7 @@ class MagneticosApp:
         asyncio.create_task(self.page.push_route(destino))
 
 def main(page: ft.Page):
-    """Iniciador main, se define la page, se construye la app y se pasa la page a la app"""
-    # Configuración de la página
+    """Configura la ventana principal y dispara el flujo inicial de la app."""
     page.title = "Información Exógena"
     page.window.icon = f"{IMG_PATH}/icono.ico"
     page.window.width = 1024
@@ -249,7 +259,7 @@ def main(page: ft.Page):
     msg = ft.Text("", color=ft.Colors.GREY_600, visible=False)
     page.add(msg)
     page.update()  # Aplica full_screen y demás propiedades de ventana
-    app = MagneticosApp(page)
+    app = InformacionExogenaApp(page)
 
     def _continuar_arranque() -> None:
         """Tras condiciones + activación (si aplica): valida catálogos y pinta la ruta inicial."""
