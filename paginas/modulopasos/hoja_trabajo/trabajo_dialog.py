@@ -1526,14 +1526,26 @@ class TrabajoDialog:
             return "—"
         return str(valor).strip()
 
-    def _fila_tarjeta_info(self, etiqueta: str, texto: str) -> ft.Row:
-        """Fila estándar label + valor para tarjetas de solo lectura (tercero, etc.)."""
+    def _fila_tarjeta_info(self, etiqueta: str, texto: str, ancho_etiqueta: int = 130) -> ft.Row:
+        """Fila label + valor para tarjetas de solo lectura; `ancho_etiqueta` alinea con el diseño de cada tarjeta."""
         return ft.Row(
             [
-                ft.Text(f"{etiqueta}:", weight=ft.FontWeight.BOLD, width=130),
+                ft.Text(f"{etiqueta}:", weight=ft.FontWeight.BOLD, width=ancho_etiqueta),
                 ft.Text(texto, expand=True),
             ],
             spacing=5,
+        )
+
+    def _partir_filas_tarjeta_dos_columnas(self, filas: list[ft.Row]) -> ft.Row:
+        """Reparte filas info en dos columnas (primera mitad izquierda, resto derecha)."""
+        n = len(filas)
+        mitad = (n + 1) // 2
+        col_izq = ft.Column(filas[:mitad], spacing=6, tight=True, expand=True)
+        col_der = ft.Column(filas[mitad:], spacing=6, tight=True, expand=True)
+        return ft.Row(
+            [col_izq, col_der],
+            spacing=16,
+            vertical_alignment=ft.CrossAxisAlignment.START,
         )
 
     def _crear_tarjeta_tercero(self):
@@ -1605,18 +1617,8 @@ class TrabajoDialog:
                 continue
             fila(str(clave).replace("_", " "), self._texto_resumen(t.get(clave)))
 
-        # Dos columnas: mitad de filas a la izquierda, resto a la derecha.
-        n = len(campos)
-        mitad = (n + 1) // 2
-        col_izq = ft.Column(campos[:mitad], spacing=6, tight=True, expand=True)
-        col_der = ft.Column(campos[mitad:], spacing=6, tight=True, expand=True)
-
         return ft.Container(
-            content=ft.Row(
-                [col_izq, col_der],
-                spacing=16,
-                vertical_alignment=ft.CrossAxisAlignment.START,
-            ),
+            content=self._partir_filas_tarjeta_dos_columnas(campos),
             padding=12,
             bgcolor=ft.Colors.GREY_100,
             border_radius=8,
@@ -1695,31 +1697,15 @@ class TrabajoDialog:
         if not campos:
             return None
 
-        filas: list[ft.Row] = []
-        for label, texto in campos:
-            filas.append(
-                ft.Row(
-                    [
-                        ft.Text(f"{label}:", weight=ft.FontWeight.BOLD, width=170),
-                        ft.Text(texto, expand=True),
-                    ],
-                    spacing=5,
-                )
-            )
-
-        mitad = (len(filas) + 1) // 2
-        col_izq = ft.Column(filas[:mitad], spacing=6, tight=True, expand=True)
-        col_der = ft.Column(filas[mitad:], spacing=6, tight=True, expand=True)
+        filas: list[ft.Row] = [
+            self._fila_tarjeta_info(label, texto, ancho_etiqueta=170) for label, texto in campos
+        ]
 
         return ft.Container(
             content=ft.Column(
                 [
                     ft.Text(titulo, weight=ft.FontWeight.W_600, color=GREY_700),
-                    ft.Row(
-                        [col_izq, col_der],
-                        spacing=16,
-                        vertical_alignment=ft.CrossAxisAlignment.START,
-                    ),
+                    self._partir_filas_tarjeta_dos_columnas(filas),
                 ],
                 spacing=8,
             ),
