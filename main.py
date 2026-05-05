@@ -37,6 +37,28 @@ from paginas.licenciamiento.primera_ejecucion import (
 )
 
 
+def _configurar_pagina_principal(page: ft.Page) -> None:
+    """Aplica configuración visual y de ventana de la aplicación."""
+    page.title = "Información Exógena"
+    page.window.icon = f"{IMG_PATH}/icono.ico"
+    page.window.width = 1024
+    page.window.height = 768
+    page.window.min_width = 1024
+    page.window.min_height = 768
+    page.window.maximized = False
+    page.theme = tema_aplicacion()
+    page.theme_mode = ft.ThemeMode.LIGHT
+    page.theme.page_transitions.windows = "cupertino"
+    page.bgcolor = FONDO_PAGINA
+
+
+def _mostrar_mensaje_arranque(page: ft.Page, mensaje: ft.Text, texto: str) -> None:
+    """Actualiza el mensaje temporal mostrado durante la inicialización."""
+    mensaje.value = texto
+    mensaje.visible = True
+    page.update()
+
+
 class InformacionExogenaApp:
     def __init__(self, page):
         """Inicializa página, contenedor de casos de uso y handlers de navegación."""
@@ -184,6 +206,7 @@ class InformacionExogenaApp:
         troute = ft.TemplateRoute(self.page.route)
         update_topbar(troute, self)
         res = resolve_route(troute)
+        route: str | None = None
         es_transicion = bool(res) and not troute.match("/")
         if res:
             route, h = res
@@ -244,17 +267,7 @@ class InformacionExogenaApp:
 
 def main(page: ft.Page):
     """Configura la ventana principal y dispara el flujo inicial de la app."""
-    page.title = "Información Exógena"
-    page.window.icon = f"{IMG_PATH}/icono.ico"
-    page.window.width = 1024
-    page.window.height = 768
-    page.window.min_width = 1024
-    page.window.min_height = 768
-    page.window.maximized = False
-    page.theme = tema_aplicacion()
-    page.theme_mode = ft.ThemeMode.LIGHT
-    page.theme.page_transitions.windows = "cupertino"
-    page.bgcolor = FONDO_PAGINA
+    _configurar_pagina_principal(page)
 
     msg = ft.Text("", color=ft.Colors.GREY_600, visible=False)
     page.add(msg)
@@ -263,15 +276,11 @@ def main(page: ft.Page):
 
     def _continuar_arranque() -> None:
         """Tras condiciones + activación (si aplica): valida catálogos y pinta la ruta inicial."""
-        msg.value = "🔄 Validando bases de datos..."
-        msg.visible = True
-        page.update()
+        _mostrar_mensaje_arranque(page, msg, "🔄 Validando bases de datos...")
         time.sleep(0.5)
 
         result = app.container.cargar_catalogos_uc.ejecutar()
-        msg.value = result
-        msg.visible = True
-        page.update()
+        _mostrar_mensaje_arranque(page, msg, result)
         time.sleep(0.8 if result.startswith("✅") else 300)
 
         msg.visible = False
