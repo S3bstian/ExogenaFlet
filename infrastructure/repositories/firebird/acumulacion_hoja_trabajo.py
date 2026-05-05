@@ -55,6 +55,98 @@ def _get_or_default(row: Any, idx: int, default: Any) -> Any:
     return row[idx] if idx < len(row) else default
 
 
+def _agrupar_por_identidad(setsdatos: List[Tuple[Any, ...]], idx_identidad: int) -> Dict[Any, List[Tuple[Any, ...]]]:
+    """Agrupa filas por identidad usando el índice indicado."""
+    grupos: Dict[Any, List[Tuple[Any, ...]]] = defaultdict(list)
+    for row in setsdatos:
+        grupos[_get_or_default(row, idx_identidad, "")].append(row)
+    return grupos
+
+
+def _unificar_tipo_t(setsdatos: List[Tuple[Any, ...]]) -> Tuple[List[Tuple[Any, ...]], Dict[Any, Dict[str, Any]]]:
+    """Unifica filas tipo T por identidad sumando campos monetarios."""
+    grupos = _agrupar_por_identidad(setsdatos, 1)
+    merged: List[Tuple[Any, ...]] = []
+    info: Dict[Any, Dict[str, Any]] = {}
+    for identidad, filas in grupos.items():
+        if len(filas) > 1:
+            info[identidad] = {
+                "cantidad": len(filas),
+                "valores_antes": {
+                    "saldoinicial": [f[idx] for f in filas for idx in [13]],
+                    "debitos": [f[idx] for f in filas for idx in [14]],
+                    "creditos": [f[idx] for f in filas for idx in [15]],
+                    "neto": [f[idx] for f in filas for idx in [16]],
+                    "saldofinal": [f[idx] for f in filas for idx in [17]],
+                },
+            }
+        base = list(filas[0])
+        for idx in (13, 14, 15, 16, 17):
+            base[idx] = 0
+            for fila in filas:
+                base[idx] = _safe_sum(base[idx], fila[idx])
+        merged.append(tuple(base))
+    return merged, info
+
+
+def _unificar_tipo_b(setsdatos: List[Tuple[Any, ...]]) -> Tuple[List[Tuple[Any, ...]], Dict[Any, Dict[str, Any]]]:
+    """Unifica filas tipo B por identidad sumando saldo."""
+    grupos = _agrupar_por_identidad(setsdatos, 0)
+    merged: List[Tuple[Any, ...]] = []
+    info: Dict[Any, Dict[str, Any]] = {}
+    for identidad, filas in grupos.items():
+        if len(filas) > 1:
+            info[identidad] = {
+                "cantidad": len(filas),
+                "valores_antes": {"saldo": [f[3] for f in filas]},
+            }
+        base = list(filas[0])
+        base[3] = 0
+        for fila in filas:
+            base[3] = _safe_sum(base[3], fila[3])
+        merged.append(tuple(base))
+    return merged, info
+
+
+def _unificar_tipo_a(setsdatos: List[Tuple[Any, ...]]) -> Tuple[List[Tuple[Any, ...]], Dict[Any, Dict[str, Any]]]:
+    """Unifica filas tipo A por tercero sumando saldos y movimientos."""
+    grupos = _agrupar_por_identidad(setsdatos, 3)
+    merged: List[Tuple[Any, ...]] = []
+    info: Dict[Any, Dict[str, Any]] = {}
+    for identidad, filas in grupos.items():
+        if len(filas) > 1:
+            info[identidad] = {
+                "cantidad": len(filas),
+                "valores_antes": {
+                    "SaldoInicial": [f[idx] for f in filas for idx in [4]],
+                    "Debitos": [f[idx] for f in filas for idx in [5]],
+                    "Creditos": [f[idx] for f in filas for idx in [6]],
+                    "SaldoFinal": [f[idx] for f in filas for idx in [7]],
+                },
+            }
+        base = list(filas[0])
+        for idx in (4, 5, 6, 7):
+            base[idx] = 0
+            for fila in filas:
+                base[idx] = _safe_sum(base[idx], fila[idx])
+        merged.append(tuple(base))
+    return merged, info
+
+
+def _unificar_setsdatos_por_tipo(
+    tipo_el: str,
+    setsdatos: List[Tuple[Any, ...]],
+) -> Tuple[List[Tuple[Any, ...]], Dict[Any, Dict[str, Any]]]:
+    """Unifica sets por tipo de elemento y retorna datos unificados + detalle de duplicados."""
+    if tipo_el == "T":
+        return _unificar_tipo_t(setsdatos)
+    if tipo_el == "B":
+        return _unificar_tipo_b(setsdatos)
+    if tipo_el == "A":
+        return _unificar_tipo_a(setsdatos)
+    return setsdatos, {}
+
+
 def acumular_conceptos_hoja_trabajo(
     conceptos: List[Dict[str, Any]],
     loader: Any,
@@ -387,78 +479,8 @@ def acumular_conceptos_hoja_trabajo(
                             pass  # Info silenciosa, solo se muestra en resumen si es relevante
 
                     if tipo_el in ('T', 'B', 'A') and setsdatos:
-                        if tipo_el == 'T':
-                            grupos = defaultdict(list)
-                            for row in setsdatos:
-                                grupos[row[1]].append(row)  # agrupar por identidad
-                            merged = []
-                            for _id, filas in grupos.items():
-                                if len(filas) > 1:
-                                    # Guardar info de unificación para el print
-                                    valores_antes = {
-                                        'saldoinicial': [f[idx] for f in filas for idx in [13]],
-                                        'debitos': [f[idx] for f in filas for idx in [14]],
-                                        'creditos': [f[idx] for f in filas for idx in [15]],
-                                        'neto': [f[idx] for f in filas for idx in [16]],
-                                        'saldofinal': [f[idx] for f in filas for idx in [17]]
-                                    }
-                                    identidades_unificadas[_id] = {
-                                        'cantidad': len(filas),
-                                        'valores_antes': valores_antes
-                                    }
-                                
-                                base = list(filas[0])
-                                for idx in (13, 14, 15, 16, 17):  # saldoinicial, debitos, creditos, neto, saldofinal
-                                    base[idx] = 0
-                                    for f in filas:
-                                        base[idx] = _safe_sum(base[idx], f[idx])
-                                merged.append(tuple(base))
-                            setsdatos = merged
-                        elif tipo_el == 'B':
-                            grupos = defaultdict(list)
-                            for row in setsdatos:
-                                grupos[row[0]].append(row)  # agrupar por Identidad
-                            merged = []
-                            for _id, filas in grupos.items():
-                                if len(filas) > 1:
-                                    valores_antes = [f[3] for f in filas]  # Saldo
-                                    identidades_unificadas[_id] = {
-                                        'cantidad': len(filas),
-                                        'valores_antes': {'saldo': valores_antes}
-                                    }
-                                
-                                base = list(filas[0])
-                                base[3] = 0
-                                for f in filas:
-                                    base[3] = _safe_sum(base[3], f[3])  # Saldo
-                                merged.append(tuple(base))
-                            setsdatos = merged
-                        elif tipo_el == 'A':
-                            grupos = defaultdict(list)
-                            for row in setsdatos:
-                                grupos[row[3]].append(row)  # agrupar por Tercero
-                            merged = []
-                            for _id, filas in grupos.items():
-                                if len(filas) > 1:
-                                    valores_antes = {
-                                        'SaldoInicial': [f[idx] for f in filas for idx in [4]],
-                                        'Debitos': [f[idx] for f in filas for idx in [5]],
-                                        'Creditos': [f[idx] for f in filas for idx in [6]],
-                                        'SaldoFinal': [f[idx] for f in filas for idx in [7]]
-                                    }
-                                    identidades_unificadas[_id] = {
-                                        'cantidad': len(filas),
-                                        'valores_antes': valores_antes
-                                    }
-                                
-                                base = list(filas[0])
-                                for idx in (4, 5, 6, 7):  # SaldoInicial, Debitos, Creditos, SaldoFinal
-                                    base[idx] = 0
-                                    for f in filas:
-                                        base[idx] = _safe_sum(base[idx], f[idx])
-                                merged.append(tuple(base))
-                            setsdatos = merged
-                        
+                        setsdatos, identidades_unificadas = _unificar_setsdatos_por_tipo(tipo_el, setsdatos)
+
                         # Guardar info de unificación para resumen final
                         if identidades_unificadas:
                             identidades_unificadas_global += len(identidades_unificadas)
