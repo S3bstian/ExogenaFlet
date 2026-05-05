@@ -1118,6 +1118,28 @@ class TrabajoDialog:
             spacing=0,
         )
 
+    def _flush_buffer_grid_tres_columnas(
+        self,
+        buffer_controles: list[tuple[str, ft.Control]],
+        *,
+        filas3: list[ft.Row],
+        margen_horizontal: int,
+        padding_celda: int,
+        ancho_fila_completa: int,
+        ancho_normal: int,
+    ) -> None:
+        """Vuelca el buffer al grid solo si tiene ítems (evita llamadas repetidas con los mismos kwargs)."""
+        if not buffer_controles:
+            return
+        self._volcar_buffer_tres_columnas(
+            filas3=filas3,
+            buffer_controles=buffer_controles,
+            margen_horizontal=margen_horizontal,
+            padding_celda=padding_celda,
+            ancho_fila_completa=ancho_fila_completa,
+            ancho_normal=ancho_normal,
+        )
+
     def _volcar_buffer_tres_columnas(
         self,
         *,
@@ -1183,18 +1205,21 @@ class TrabajoDialog:
             )
 
             buffer_controles: list[tuple[str, ft.Control]] = []
+            def flush_buf() -> None:
+                self._flush_buffer_grid_tres_columnas(
+                    buffer_controles,
+                    filas3=filas3,
+                    margen_horizontal=margen_horizontal,
+                    padding_celda=padding_celda,
+                    ancho_fila_completa=ancho_fila_completa,
+                    ancho_normal=ancho_normal,
+                )
+
             for attr, ctrl in grupo:
                 if self._es_attr_razon_social(attr):
                     if buffer_controles:
-                        self._volcar_buffer_tres_columnas(
-                            filas3=filas3,
-                            buffer_controles=buffer_controles,
-                            margen_horizontal=margen_horizontal,
-                            padding_celda=padding_celda,
-                            ancho_fila_completa=ancho_fila_completa,
-                            ancho_normal=ancho_normal,
-                        )
-                        buffer_controles = []
+                        flush_buf()
+                        buffer_controles.clear()
                     filas3.append(
                         self._fila_razon_social_grid(
                             ancho_fila_completa, ctrl, padding_celda
@@ -1203,26 +1228,21 @@ class TrabajoDialog:
                 else:
                     buffer_controles.append((attr, ctrl))
                     if len(buffer_controles) == 3:
-                        self._volcar_buffer_tres_columnas(
-                            filas3=filas3,
-                            buffer_controles=buffer_controles,
-                            margen_horizontal=margen_horizontal,
-                            padding_celda=padding_celda,
-                            ancho_fila_completa=ancho_fila_completa,
-                            ancho_normal=ancho_normal,
-                        )
-                        buffer_controles = []
-            if buffer_controles:
-                self._volcar_buffer_tres_columnas(
-                    filas3=filas3,
-                    buffer_controles=buffer_controles,
-                    margen_horizontal=margen_horizontal,
-                    padding_celda=padding_celda,
-                    ancho_fila_completa=ancho_fila_completa,
-                    ancho_normal=ancho_normal,
-                )
+                        flush_buf()
+                        buffer_controles.clear()
+            flush_buf()
 
         return filas3
+
+    def _shell_scroll_formulario(self, hijos_columna: list) -> ft.Container:
+        """Envuelve la columna principal del formulario en scroll sin duplicar nesting en el llamador."""
+        content_column = ft.Container(
+            content=ft.Column(hijos_columna, expand=True), expand=True, padding=0
+        )
+        return ft.Container(
+            content=ft.Column([content_column], expand=True, scroll=ft.ScrollMode.AUTO),
+            padding=0,
+        )
 
     def _construir_contenido_dialogo(self, controles):
         """Arma mensaje, piezas opcionales (fideicomiso, tercero) y grid según `self.modo`."""
@@ -1236,15 +1256,7 @@ class TrabajoDialog:
                 expand=True,
             )
         )
-
-        content_column = ft.Container(
-            content=ft.Column(contenido_columna, expand=True), expand=True, padding=0
-        )
-        
-        return ft.Container(
-            content=ft.Column([content_column], expand=True, scroll=ft.ScrollMode.AUTO),
-            padding=0,
-        )
+        return self._shell_scroll_formulario(contenido_columna)
 
     def _boton_selector_tercero(self) -> ft.Row:
         """Botón central para abrir selector de terceros en modo nuevo."""
