@@ -970,10 +970,7 @@ class TerceroDialog:
                     elif parte == "Apellido2":
                         tercero_mod["segundoapellido"] = palabras[i]
             
-            # mapear tipo documento si es string
-            td_txt = tercero_mod.get("tipodocumento")
-            cod_tipodoc = obtener_codigo_tipodoc(td_txt)
-            tercero_mod["tipodocumento"] = int(cod_tipodoc) if cod_tipodoc else 0
+            self._normalizar_codigos_tercero(tercero_mod)
             res = self.parent._terceros_uc.actualizar_tercero(tercero_mod)
             if res and not (isinstance(res, str) and res.startswith("Error")):
                 aplicados += 1
