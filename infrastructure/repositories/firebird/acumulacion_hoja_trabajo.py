@@ -787,44 +787,71 @@ def _construir_sets_por_atributos(
                 print(f"    [WARNING] Atributo {attr_count}: Tabla no permitida '{tabla}', saltando...")
                 continue
 
-            if tipo_el == "T":
-                total_registros_antes_unificar += _cargar_sets_tipo_t_por_atributo(
-                    cur=cur,
-                    attr=attr,
-                    concepto_codigo=concepto_codigo,
-                    concepto_formato=concepto_formato,
-                    setsdatos=setsdatos,
-                    identidades_unicas_antes=identidades_unicas_antes,
-                    advertencias_sin_datos_map=advertencias_sin_datos_map,
-                )
-            elif tipo_el == "C":
-                _cargar_set_tipo_c_por_atributo(
-                    cur=cur,
-                    tabla=tabla,
-                    attr=attr,
-                    concepto_codigo=concepto_codigo,
-                    concepto_formato=concepto_formato,
-                    setsdatos=setsdatos,
-                    advertencias_sin_datos_map=advertencias_sin_datos_map,
-                )
-            elif tipo_el == "B":
-                total_registros_antes_unificar += _cargar_sets_tipo_b(
-                    cur,
-                    setsdatos,
-                    identidades_unicas_antes,
-                )
-            elif tipo_el == "A":
-                total_registros_antes_unificar += _cargar_sets_tipo_a(
-                    cur,
-                    tabla,
-                    setsdatos,
-                    identidades_unicas_antes,
-                )
+            total_registros_antes_unificar += _cargar_sets_por_tipo_elemento(
+                cur=cur,
+                tipo_el=tipo_el,
+                tabla=tabla,
+                attr=attr,
+                concepto_codigo=concepto_codigo,
+                concepto_formato=concepto_formato,
+                setsdatos=setsdatos,
+                identidades_unicas_antes=identidades_unicas_antes,
+                advertencias_sin_datos_map=advertencias_sin_datos_map,
+            )
         except Exception as e:
             print(f"[ERROR] Concepto {concepto_codigo}, Atributo {attr[0]}: {e}")
             raise e
 
     return total_registros_antes_unificar, identidades_unicas_antes
+
+
+def _cargar_sets_por_tipo_elemento(
+    cur: Any,
+    tipo_el: str,
+    tabla: str,
+    attr: Tuple[Any, ...],
+    concepto_codigo: Any,
+    concepto_formato: Any,
+    setsdatos: List[Tuple[Any, ...]],
+    identidades_unicas_antes: set,
+    advertencias_sin_datos_map: Dict[Tuple[str, str], set],
+) -> int:
+    """Despacha la carga de sets según tipo de elemento y retorna registros contables."""
+    if tipo_el == "T":
+        return _cargar_sets_tipo_t_por_atributo(
+            cur=cur,
+            attr=attr,
+            concepto_codigo=concepto_codigo,
+            concepto_formato=concepto_formato,
+            setsdatos=setsdatos,
+            identidades_unicas_antes=identidades_unicas_antes,
+            advertencias_sin_datos_map=advertencias_sin_datos_map,
+        )
+    if tipo_el == "C":
+        _cargar_set_tipo_c_por_atributo(
+            cur=cur,
+            tabla=tabla,
+            attr=attr,
+            concepto_codigo=concepto_codigo,
+            concepto_formato=concepto_formato,
+            setsdatos=setsdatos,
+            advertencias_sin_datos_map=advertencias_sin_datos_map,
+        )
+        return 0
+    if tipo_el == "B":
+        return _cargar_sets_tipo_b(
+            cur,
+            setsdatos,
+            identidades_unicas_antes,
+        )
+    if tipo_el == "A":
+        return _cargar_sets_tipo_a(
+            cur,
+            tabla,
+            setsdatos,
+            identidades_unicas_antes,
+        )
+    return 0
 
 
 def _checkpoint_concepto(en_ui: Any, raise_if_cancel: Any, valor: float) -> None:
