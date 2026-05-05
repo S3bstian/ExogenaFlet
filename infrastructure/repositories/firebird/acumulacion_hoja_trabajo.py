@@ -325,6 +325,138 @@ def _cargar_sets_tipo_a(
     return _agregar_rows_con_identidad(datos, 3, setsdatos, identidades_unicas_antes)
 
 
+def _registrar_advertencia_cuenta_sin_datos(
+    advertencias_sin_datos_map: Dict[Tuple[str, str], set],
+    concepto_codigo: Any,
+    concepto_formato: Any,
+    codigo_cuenta: Any,
+) -> None:
+    """Registra cuenta configurada sin datos para el concepto/formato actual."""
+    if not _codigo_cuenta_no_vacio(codigo_cuenta):
+        return
+    advertencias_sin_datos_map[
+        (str(concepto_codigo), str(concepto_formato))
+    ].add(str(codigo_cuenta).strip())
+
+
+def _cargar_sets_tipo_t_por_atributo(
+    cur: Any,
+    attr: Tuple[Any, ...],
+    concepto_codigo: Any,
+    concepto_formato: Any,
+    setsdatos: List[Tuple[Any, ...]],
+    identidades_unicas_antes: set,
+    advertencias_sin_datos_map: Dict[Tuple[str, str], set],
+) -> int:
+    """Carga movimientos de terceros para una cuenta del atributo y acumula identidades."""
+    tabla = _tabla_por_tipocontabilidad(attr[2])
+    if tabla == "" or not _codigo_cuenta_no_vacio(attr[4]):
+        return 0
+
+    tabla_cuentas = "cuentas_trib" if attr[2] == 1 else "cuentas_cont"
+    if tabla_cuentas not in TABLAS_CUENTAS_PERMITIDAS:
+        return 0
+
+    query = f"""
+        SELECT 
+            t.tipodocumento, tm.identidad, t.naturaleza, t.digitoverificacion, t.razonsocial,
+            t.primerapellido, t.segundoapellido, t.primernombre, t.segundonombre, t.direccion, 
+            t.departamento, t.municipio, t.pais,
+            CASE 
+                WHEN c.valorabsoluto = 'S' THEN ABS(SUM(tm.saldoinicial))
+                ELSE SUM(tm.saldoinicial)
+            END AS saldoinicial,
+            CASE 
+                WHEN c.valorabsoluto = 'S' THEN ABS(SUM(tm.debitos))
+                ELSE SUM(tm.debitos)
+            END AS debitos,
+            CASE 
+                WHEN c.valorabsoluto = 'S' THEN ABS(SUM(tm.creditos))
+                ELSE SUM(tm.creditos)
+            END AS creditos,
+            CASE 
+                WHEN c.valorabsoluto = 'S' THEN ABS(
+                    CASE 
+                        WHEN t.naturaleza = 0 THEN SUM(tm.debitos) - SUM(tm.creditos)
+                        ELSE SUM(tm.creditos) - SUM(tm.debitos)
+                    END
+                )
+                ELSE 
+                    CASE 
+                        WHEN t.naturaleza = 0 THEN SUM(tm.debitos) - SUM(tm.creditos)
+                        ELSE SUM(tm.creditos) - SUM(tm.debitos)
+                    END
+            END AS neto,
+            CASE 
+                WHEN c.valorabsoluto = 'S' THEN ABS(SUM(tm.saldofinal))
+                ELSE SUM(tm.saldofinal)
+            END AS saldofinal
+        FROM TERCEROS t
+        INNER JOIN TERCEROS_MOV{tabla} tm 
+                ON tm.identidad = t.identidad
+        INNER JOIN {tabla_cuentas} c
+                ON c.codigo = tm.cuenta
+        WHERE tm.cuenta = ?
+        GROUP BY 
+            tm.identidad, t.tipodocumento, t.naturaleza, t.digitoverificacion, t.razonsocial,
+            t.primerapellido, t.segundoapellido, t.primernombre, t.segundonombre,
+            t.direccion, t.departamento, t.municipio, t.pais, c.valorabsoluto
+    """
+    cur.execute(query, (attr[4],))
+    datos = cur.fetchall()
+    if not datos:
+        _registrar_advertencia_cuenta_sin_datos(
+            advertencias_sin_datos_map,
+            concepto_codigo,
+            concepto_formato,
+            attr[4],
+        )
+        return 0
+    return _agregar_rows_con_identidad(datos, 1, setsdatos, identidades_unicas_antes)
+
+
+def _cargar_set_tipo_c_por_atributo(
+    cur: Any,
+    tabla: str,
+    attr: Tuple[Any, ...],
+    concepto_codigo: Any,
+    concepto_formato: Any,
+    setsdatos: List[Tuple[Any, ...]],
+    advertencias_sin_datos_map: Dict[Tuple[str, str], set],
+) -> None:
+    """Carga saldo de cuenta para tipo C por atributo."""
+    if tabla == "" or not _codigo_cuenta_no_vacio(attr[4]):
+        return
+    query = f"""
+        SELECT 
+            codigo,
+            nombre,
+            naturaleza,
+            tercero,
+            saldoinicial,
+            debitos,
+            creditos,
+            CASE 
+                WHEN naturaleza = 'D' THEN debitos - creditos
+                ELSE creditos - debitos
+            END AS neto,
+            saldofinal
+        FROM CUENTAS{tabla}
+        WHERE codigo = ?
+    """
+    cur.execute(query, (attr[4],))
+    datos = cur.fetchone()
+    if not datos:
+        _registrar_advertencia_cuenta_sin_datos(
+            advertencias_sin_datos_map,
+            concepto_codigo,
+            concepto_formato,
+            attr[4],
+        )
+        return
+    setsdatos.append(datos)
+
+
 def _registrar_error_insert(
     total_errores: List[Dict[str, Any]],
     concepto_codigo: Any,
@@ -707,99 +839,26 @@ def acumular_conceptos_hoja_trabajo(
                                 print(f"    [WARNING] Atributo {attr_count}: Tabla no permitida '{tabla}', saltando...")
                                 continue
                                 
-                            if tipo_el == "T" and tabla != "" and _codigo_cuenta_no_vacio(attr[4]):
-                                tabla_cuentas = "cuentas_trib" if attr[2] == 1 else "cuentas_cont"
-                                
-                                if tabla_cuentas not in TABLAS_CUENTAS_PERMITIDAS:
-                                    continue
-                                
-                                query = f"""
-                                    SELECT 
-                                        t.tipodocumento, tm.identidad, t.naturaleza, t.digitoverificacion, t.razonsocial,
-                                        t.primerapellido, t.segundoapellido, t.primernombre, t.segundonombre, t.direccion, 
-                                        t.departamento, t.municipio, t.pais,
-                                        CASE 
-                                            WHEN c.valorabsoluto = 'S' THEN ABS(SUM(tm.saldoinicial))
-                                            ELSE SUM(tm.saldoinicial)
-                                        END AS saldoinicial,
-                                        CASE 
-                                            WHEN c.valorabsoluto = 'S' THEN ABS(SUM(tm.debitos))
-                                            ELSE SUM(tm.debitos)
-                                        END AS debitos,
-                                        CASE 
-                                            WHEN c.valorabsoluto = 'S' THEN ABS(SUM(tm.creditos))
-                                            ELSE SUM(tm.creditos)
-                                        END AS creditos,
-                                        CASE 
-                                            WHEN c.valorabsoluto = 'S' THEN ABS(
-                                                CASE 
-                                                    WHEN t.naturaleza = 0 THEN SUM(tm.debitos) - SUM(tm.creditos)
-                                                    ELSE SUM(tm.creditos) - SUM(tm.debitos)
-                                                END
-                                            )
-                                            ELSE 
-                                                CASE 
-                                                    WHEN t.naturaleza = 0 THEN SUM(tm.debitos) - SUM(tm.creditos)
-                                                    ELSE SUM(tm.creditos) - SUM(tm.debitos)
-                                                END
-                                        END AS neto,
-                                        CASE 
-                                            WHEN c.valorabsoluto = 'S' THEN ABS(SUM(tm.saldofinal))
-                                            ELSE SUM(tm.saldofinal)
-                                        END AS saldofinal
-                                    FROM TERCEROS t
-                                    INNER JOIN TERCEROS_MOV{tabla} tm 
-                                            ON tm.identidad = t.identidad
-                                    INNER JOIN {tabla_cuentas} c
-                                            ON c.codigo = tm.cuenta
-                                    WHERE tm.cuenta = ?
-                                    GROUP BY 
-                                        tm.identidad, t.tipodocumento, t.naturaleza, t.digitoverificacion, t.razonsocial,
-                                        t.primerapellido, t.segundoapellido, t.primernombre, t.segundonombre,
-                                        t.direccion, t.departamento, t.municipio, t.pais, c.valorabsoluto
-                                """
-                                
-                                cur.execute(query, (attr[4],))
-                                datos = cur.fetchall()
-                                if not datos and _codigo_cuenta_no_vacio(attr[4]):
-                                    advertencias_sin_datos_map[
-                                        (str(concepto_codigo), str(concepto_formato))
-                                    ].add(str(attr[4]).strip())
-                                total_registros_antes_unificar += _agregar_rows_con_identidad(
-                                    datos,
-                                    1,
-                                    setsdatos,
-                                    identidades_unicas_antes,
+                            if tipo_el == "T":
+                                total_registros_antes_unificar += _cargar_sets_tipo_t_por_atributo(
+                                    cur=cur,
+                                    attr=attr,
+                                    concepto_codigo=concepto_codigo,
+                                    concepto_formato=concepto_formato,
+                                    setsdatos=setsdatos,
+                                    identidades_unicas_antes=identidades_unicas_antes,
+                                    advertencias_sin_datos_map=advertencias_sin_datos_map,
                                 )
-                            elif tipo_el == "C" and tabla != "":
-                                if not _codigo_cuenta_no_vacio(attr[4]):
-                                    continue
-                                query = f"""
-                                    SELECT 
-                                        codigo,
-                                        nombre,
-                                        naturaleza,
-                                        tercero,
-                                        saldoinicial,
-                                        debitos,
-                                        creditos,
-                                        CASE 
-                                            WHEN naturaleza = 'D' THEN debitos - creditos
-                                            ELSE creditos - debitos
-                                        END AS neto,
-                                        saldofinal
-                                    FROM CUENTAS{tabla}
-                                    WHERE codigo = ?
-                                """
-                                
-                                cur.execute(query, (attr[4],))
-                                datos = cur.fetchone()
-                                if not datos and _codigo_cuenta_no_vacio(attr[4]):
-                                    advertencias_sin_datos_map[
-                                        (str(concepto_codigo), str(concepto_formato))
-                                    ].add(str(attr[4]).strip())
-                                elif datos:
-                                    setsdatos.append(datos)
+                            elif tipo_el == "C":
+                                _cargar_set_tipo_c_por_atributo(
+                                    cur=cur,
+                                    tabla=tabla,
+                                    attr=attr,
+                                    concepto_codigo=concepto_codigo,
+                                    concepto_formato=concepto_formato,
+                                    setsdatos=setsdatos,
+                                    advertencias_sin_datos_map=advertencias_sin_datos_map,
+                                )
                             elif tipo_el == "B":
                                 total_registros_antes_unificar += _cargar_sets_tipo_b(
                                     cur,
