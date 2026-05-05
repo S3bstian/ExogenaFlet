@@ -273,17 +273,37 @@ class TomaInformacionPage(ft.Column):
                     )
                 )
                 
-        self.nav_row.controls[1].visible = not self.offset <= 0
-        if self.limit:
-            total_paginas = (self.total_conceptos + self.limit - 1) // self.limit if self.total_conceptos > 0 else 1
-        else:
-            total_paginas = 1
-        pagina = (self.offset // self.limit) + 1 if self.limit else 1
-        has_next = pagina < total_paginas
-        self.nav_row.controls[3].visible = has_next
-        total = self.total_conceptos if self.total_conceptos > 0 else None
-        self.pagination_text_footer.value = pagination_text_value(pagina, total_paginas, total)
+        self._actualizar_controles_paginacion()
         self._page.update()
+
+    def _filtro_actual_busqueda(self):
+        """Retorna filtro normalizado desde el cuadro de búsqueda."""
+        return (self.search_field.value or "").strip() or None
+
+    def _total_paginas(self) -> int:
+        """Calcula total de páginas con fallback seguro cuando no hay resultados o límite inválido."""
+        if not self.limit:
+            return 1
+        return (
+            (self.total_conceptos + self.limit - 1) // self.limit
+            if self.total_conceptos > 0
+            else 1
+        )
+
+    def _pagina_actual(self) -> int:
+        """Número de página actual (1-based)."""
+        return (self.offset // self.limit) + 1 if self.limit else 1
+
+    def _actualizar_controles_paginacion(self) -> None:
+        """Sincroniza botones anterior/siguiente y texto de paginación del footer."""
+        self.nav_row.controls[1].visible = not self.offset <= 0
+        total_paginas = self._total_paginas()
+        pagina = self._pagina_actual()
+        self.nav_row.controls[3].visible = pagina < total_paginas
+        total = self.total_conceptos if self.total_conceptos > 0 else None
+        self.pagination_text_footer.value = pagination_text_value(
+            pagina, total_paginas, total
+        )
 
     def _ir_a_pagina(self, pagina: int):
         """Salta a la página indicada (1-based) respetando los límites."""
@@ -295,7 +315,7 @@ class TomaInformacionPage(ft.Column):
             if pagina > total_paginas:
                 pagina = total_paginas
         self.offset = (pagina - 1) * self.limit
-        self._load_conceptos(filtro=self.search_field.value.strip() or None)
+        self._load_conceptos(filtro=self._filtro_actual_busqueda())
 
     # -------------------- EVENTOS --------------------
     def _toggle(self, cid, data, value):
@@ -303,49 +323,63 @@ class TomaInformacionPage(ft.Column):
             self.seleccion_global.append(data)
         else:
             self.seleccion_global = [d for d in self.seleccion_global if d.id != cid]
-        
+
+    def _desmarcar_todos_visibles(self) -> None:
+        """Quita selección global y desmarca checkboxes de la página visible."""
+        self.seleccion_global = []
+        for cb in self.checkboxes.values():
+            cb.value = False
+            cb.update()
+
+    def _aplicar_seleccion_global(self, conceptos: list) -> None:
+        """Aplica la lista seleccionada y refleja checks en la página actual."""
+        self.seleccion_global = conceptos
+        for cb in self.checkboxes.values():
+            cb.value = True
+            cb.update()
+
+    def _cargar_todos_conceptos_filtrados(self, filtro):
+        """Carga lote amplio de conceptos para selección masiva."""
+        return list(
+            self._obtener_conceptos_uc.ejecutar(
+                offset=0,
+                limit=5000,
+                filtro=filtro,
+            )[0]
+        )
+
+    def _seleccionar_todos_en_hilo(self, filtro) -> None:
+        """Ejecuta la selección masiva en background y sincroniza UI al finalizar."""
+        try:
+            todos = self._cargar_todos_conceptos_filtrados(filtro)
+        except Exception as ex:
+            ejecutar_en_ui(
+                self._page,
+                lambda ex=ex: self._loader_fin_y_error(
+                    f"Error al seleccionar todos: {ex}"
+                ),
+            )
+            return
+
+        def _ok():
+            self._aplicar_seleccion_global(todos)
+            self._loader_fin()
+            if len(todos) == 5000:
+                self.mostrar_mensaje("Se seleccionaron 5000 conceptos (límite).", 2500)
+
+        ejecutar_en_ui(self._page, _ok)
+
     def _toggle_all(self, e):
         new_val = not all(cb.value for cb in self.checkboxes.values())
         filtro = (self.search_field.value or "").strip() or None
         if not new_val:
             self._loader_trabajo("Quitando selección...")
-            self.seleccion_global = []
-            for cb in self.checkboxes.values():
-                cb.value = False
-                cb.update()
+            self._desmarcar_todos_visibles()
             self._loader_fin()
             return
 
         self._loader_trabajo("Seleccionando todos los conceptos...")
-
-        def _worker():
-            try:
-                todos = list(
-                    self._obtener_conceptos_uc.ejecutar(
-                        offset=0,
-                        limit=5000,
-                        filtro=filtro,
-                    )[0]
-                )
-            except Exception as ex:
-                ejecutar_en_ui(
-                    self._page,
-                    lambda ex=ex: self._loader_fin_y_error(f"Error al seleccionar todos: {ex}"),
-                )
-                return
-
-            def _ok():
-                self.seleccion_global = todos
-                for cb in self.checkboxes.values():
-                    cb.value = True
-                    cb.update()
-                self._loader_fin()
-                if len(todos) == 5000:
-                    self.mostrar_mensaje("Se seleccionaron 5000 conceptos (límite).", 2500)
-
-            ejecutar_en_ui(self._page, _ok)
-
-        self._page.run_thread(_worker)
+        self._page.run_thread(lambda: self._seleccionar_todos_en_hilo(filtro))
 
     def _buscar(self, e):
         ft.context.disable_auto_update()
@@ -413,7 +447,7 @@ class TomaInformacionPage(ft.Column):
         if nuevo_offset < 0:
             return
         self.offset = nuevo_offset
-        self._load_conceptos(filtro=self.search_field.value.strip() or None)
+        self._load_conceptos(filtro=self._filtro_actual_busqueda())
 
     def _banner_prefijos_sync(self) -> None:
         """Sincroniza el aviso visual del prefijo ALT usado para salto de página."""
@@ -604,31 +638,42 @@ class TomaInformacionPage(ft.Column):
         self._page.show_dialog(bottomsheet)
         self._page.update()
 
-        def _worker():
-            try:
-                # Preparación (vacía por concepto) y acumulación van en una sola transacción en BD.
-                resultado = self._acumular_conceptos_uc.ejecutar(
-                    conceptos=self.seleccion_global,
-                    loader=loader_bottom,
-                    page=self._page,
-                    bottom_text=bottom_text,
-                    cancel_event=cancel_ev,
-                )
-                self._page.pop_dialog()
-                self._page.update()
-                self._mostrar_dialogo_resultado_acumulacion(resultado)
-            except Exception as ex:
-                self._page.pop_dialog()
-                self._page.update()
-                self._mostrar_dialogo_resultado_acumulacion(
-                    ResultadoAcumulacion(
-                        exito=False,
-                        mensaje_error_critico=str(ex),
-                        total_conceptos_solicitados=len(self.seleccion_global),
-                    )
-                )
+        self._page.run_thread(
+            lambda: self._acumular_en_hilo(
+                loader_bottom=loader_bottom,
+                bottom_text=bottom_text,
+                cancel_ev=cancel_ev,
+            )
+        )
 
-        self._page.run_thread(_worker)
+    def _cerrar_bottomsheet_y_mostrar_resultado(self, resultado: ResultadoAcumulacion) -> None:
+        """Cierra progreso y presenta diálogo final de resultado."""
+        self._page.pop_dialog()
+        self._page.update()
+        self._mostrar_dialogo_resultado_acumulacion(resultado)
+
+    def _resultado_error_acumulacion(self, ex: Exception) -> ResultadoAcumulacion:
+        """Construye resultado uniforme cuando falla la ejecución de acumulación."""
+        return ResultadoAcumulacion(
+            exito=False,
+            mensaje_error_critico=str(ex),
+            total_conceptos_solicitados=len(self.seleccion_global),
+        )
+
+    def _acumular_en_hilo(self, *, loader_bottom, bottom_text, cancel_ev) -> None:
+        """Ejecuta acumulación en background y normaliza salida de éxito/error."""
+        try:
+            # Preparación (vacía por concepto) y acumulación van en una sola transacción en BD.
+            resultado = self._acumular_conceptos_uc.ejecutar(
+                conceptos=self.seleccion_global,
+                loader=loader_bottom,
+                page=self._page,
+                bottom_text=bottom_text,
+                cancel_event=cancel_ev,
+            )
+        except Exception as ex:
+            resultado = self._resultado_error_acumulacion(ex)
+        self._cerrar_bottomsheet_y_mostrar_resultado(resultado)
     
     def mostrar_mensaje(self, texto, duration):
         mostrar_mensaje(self._page, texto, duration)
