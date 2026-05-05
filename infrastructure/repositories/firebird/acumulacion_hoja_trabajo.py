@@ -757,6 +757,23 @@ def _construir_sets_por_atributos(
     return total_registros_antes_unificar, identidades_unicas_antes
 
 
+def _checkpoint_concepto(en_ui: Any, raise_if_cancel: Any, valor: float) -> None:
+    """Actualiza progreso intermedio y valida cancelación del proceso."""
+    en_ui(valor)
+    raise_if_cancel()
+    time.sleep(0.03)
+
+
+def _resultado_concepto_sin_elemento(concepto_codigo: Any) -> Dict[str, Any]:
+    """Construye resultado estándar cuando un concepto no tiene elemento válido."""
+    return {
+        "omitido_sin_elemento": True,
+        "concepto_codigo": str(concepto_codigo),
+        "insert_count": 0,
+        "identidades_unificadas": 0,
+    }
+
+
 def _procesar_concepto_acumulacion(
     cur: Any,
     concepto: Dict[str, Any],
@@ -782,7 +799,7 @@ def _procesar_concepto_acumulacion(
         elemento = _obtener_elemento_concepto(cur, concepto.get("id"))
         if not elemento:
             print(f"[WARNING] Concepto {concepto_codigo} omitido: no tiene elemento válido")
-            return {"omitido_sin_elemento": True, "concepto_codigo": str(concepto_codigo), "insert_count": 0, "identidades_unificadas": 0}
+            return _resultado_concepto_sin_elemento(concepto_codigo)
         tipo_el = _normalizar_tipo_elemento(elemento[1])
         print(
             f"[ACUMULACIÓN] Concepto {concepto_codigo} | Formato {concepto_formato} "
@@ -792,9 +809,7 @@ def _procesar_concepto_acumulacion(
         print(f"[ERROR] Concepto {concepto_codigo}: {e}")
         raise e
 
-    en_ui(0.11)
-    raise_if_cancel()
-    time.sleep(0.03)
+    _checkpoint_concepto(en_ui, raise_if_cancel, 0.11)
 
     try:
         atributos = _obtener_atributos_elemento(cur, elemento[0])
@@ -803,9 +818,7 @@ def _procesar_concepto_acumulacion(
         raise e
 
     print(f"[ACUMULACIÓN]   Atributos ({len(atributos)}): {atributos}")
-    en_ui(0.22)
-    raise_if_cancel()
-    time.sleep(0.03)
+    _checkpoint_concepto(en_ui, raise_if_cancel, 0.22)
 
     sin_cuentas_config = False
     if tipo_el in ("T", "C") and not any(
@@ -824,9 +837,7 @@ def _procesar_concepto_acumulacion(
         raise_if_cancel=raise_if_cancel,
     )
 
-    en_ui(0.33)
-    raise_if_cancel()
-    time.sleep(0.03)
+    _checkpoint_concepto(en_ui, raise_if_cancel, 0.33)
 
     identidades_unificadas_count = 0
     if tipo_el in ("T", "B", "A") and setsdatos:
@@ -858,6 +869,27 @@ def _procesar_concepto_acumulacion(
         "identidades_unificadas": identidades_unificadas_count,
         "sin_cuentas_config": sin_cuentas_config,
     }
+
+
+def _acumular_resultado_concepto(
+    resultado_concepto: Dict[str, Any],
+    conceptos_omitidos_sin_elemento: List[str],
+    conceptos_sin_cuentas_en_config: List[str],
+    conceptos_sin_filas_en_hoja: List[str],
+) -> Tuple[int, int]:
+    """Consolida métricas/listas de salida para un concepto procesado."""
+    if resultado_concepto["omitido_sin_elemento"]:
+        conceptos_omitidos_sin_elemento.append(resultado_concepto["concepto_codigo"])
+        return 0, 0
+
+    if resultado_concepto["sin_cuentas_config"]:
+        conceptos_sin_cuentas_en_config.append(resultado_concepto["concepto_codigo"])
+
+    insert_count = resultado_concepto["insert_count"]
+    if insert_count == 0 and len(conceptos_sin_filas_en_hoja) < 40:
+        conceptos_sin_filas_en_hoja.append(resultado_concepto["concepto_codigo"])
+
+    return resultado_concepto["identidades_unificadas"], insert_count
 
 
 def acumular_conceptos_hoja_trabajo(
@@ -976,18 +1008,14 @@ def acumular_conceptos_hoja_trabajo(
                         raise_if_cancel=_raise_if_cancel,
                     )
 
-                    if resultado_concepto["omitido_sin_elemento"]:
-                        conceptos_omitidos_sin_elemento.append(resultado_concepto["concepto_codigo"])
-                        continue
-
-                    if resultado_concepto["sin_cuentas_config"]:
-                        conceptos_sin_cuentas_en_config.append(resultado_concepto["concepto_codigo"])
-
-                    identidades_unificadas_global += resultado_concepto["identidades_unificadas"]
-                    insert_count = resultado_concepto["insert_count"]
+                    identidades_unificadas, insert_count = _acumular_resultado_concepto(
+                        resultado_concepto=resultado_concepto,
+                        conceptos_omitidos_sin_elemento=conceptos_omitidos_sin_elemento,
+                        conceptos_sin_cuentas_en_config=conceptos_sin_cuentas_en_config,
+                        conceptos_sin_filas_en_hoja=conceptos_sin_filas_en_hoja,
+                    )
+                    identidades_unificadas_global += identidades_unificadas
                     total_inserts += insert_count
-                    if insert_count == 0 and len(conceptos_sin_filas_en_hoja) < 40:
-                        conceptos_sin_filas_en_hoja.append(resultado_concepto["concepto_codigo"])
 
                 # ==================== RESUMEN FINAL ====================
                 _imprimir_resumen_final_acumulacion(
