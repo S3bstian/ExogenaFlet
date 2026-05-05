@@ -800,7 +800,7 @@ def _construir_sets_por_atributos(
             )
         except Exception as e:
             print(f"[ERROR] Concepto {concepto_codigo}, Atributo {attr[0]}: {e}")
-            raise e
+            raise
 
     return total_registros_antes_unificar, identidades_unicas_antes
 
@@ -904,7 +904,7 @@ def _procesar_concepto_acumulacion(
         )
     except Exception as e:
         print(f"[ERROR] Concepto {concepto_codigo}: {e}")
-        raise e
+        raise
 
     _checkpoint_concepto(en_ui, raise_if_cancel, 0.11)
 
@@ -912,7 +912,7 @@ def _procesar_concepto_acumulacion(
         atributos = _obtener_atributos_elemento(cur, elemento[0])
     except Exception as e:
         print(f"[ERROR] Obteniendo atributos para concepto {concepto_codigo}: {e}")
-        raise e
+        raise
 
     print(f"[ACUMULACIÓN]   Atributos ({len(atributos)}): {atributos}")
     _checkpoint_concepto(en_ui, raise_if_cancel, 0.22)
