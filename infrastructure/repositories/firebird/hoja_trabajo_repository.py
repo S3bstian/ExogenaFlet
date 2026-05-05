@@ -49,6 +49,57 @@ def _payload_undo_desde_blob(payload_blob: Any) -> dict:
     return json.loads(payload_str)
 
 
+def _ids_csv(ids: List[Any]) -> str:
+    """Convierte lista de IDs a CSV para cláusulas IN; retorna '0' cuando viene vacía."""
+    return ",".join(str(x) for x in ids) if ids else "0"
+
+
+def _restar_monto_en_atributo_base(
+    cur: Any,
+    *,
+    id_concepto: int,
+    attr_id: int,
+    identidad: str,
+    monto: Any,
+) -> None:
+    """Resta un monto sobre un atributo base de la identidad si existe fila actual."""
+    cur.execute(
+        "SELECT VALOR FROM HOJA_TRABAJO WHERE IDCONCEPTO = ? AND IDATRIBUTO = ? AND TRIM(IDENTIDADTERCERO) = TRIM(?)",
+        (id_concepto, attr_id, identidad),
+    )
+    r = cur.fetchone()
+    if not r:
+        return
+    base = _to_float(r[0])
+    nuevo = base - _to_float(monto)
+    cur.execute(
+        "UPDATE HOJA_TRABAJO SET VALOR = ? WHERE IDCONCEPTO = ? AND IDATRIBUTO = ? AND TRIM(IDENTIDADTERCERO) = TRIM(?)",
+        (str(nuevo) if nuevo != 0 else "0", id_concepto, attr_id, identidad),
+    )
+
+
+def _restar_sumas_por_atributo(
+    cur: Any,
+    *,
+    id_concepto: int,
+    identidad_base: str,
+    sumas_por_attr: Dict[Any, Any],
+) -> None:
+    """Aplica resta por atributo para un payload de undo ignorando claves no numéricas."""
+    for attr_id_str, monto in sumas_por_attr.items():
+        try:
+            attr_id = int(attr_id_str)
+        except (ValueError, TypeError):
+            continue
+        _restar_monto_en_atributo_base(
+            cur,
+            id_concepto=id_concepto,
+            attr_id=attr_id,
+            identidad=identidad_base,
+            monto=monto,
+        )
+
+
 def _where_concepto_filtro_hoja(
     legacy_concepto: Optional[Any],
     filtro: Optional[str],
@@ -697,23 +748,12 @@ class FirebirdHojaTrabajoRepository:
                     filas = pl.get("filas_restaurar", [])
 
                     if cc_existia:
-                        for attr_id_str, monto in suma_restar.items():
-                            try:
-                                attr_id = int(attr_id_str)
-                            except (ValueError, TypeError):
-                                continue
-                            cur.execute(
-                                "SELECT VALOR FROM HOJA_TRABAJO WHERE IDCONCEPTO = ? AND IDATRIBUTO = ? AND TRIM(IDENTIDADTERCERO) = TRIM(?)",
-                                (id_concepto, attr_id, cc_identidad),
-                            )
-                            r = cur.fetchone()
-                            if r:
-                                base = _to_float(r[0])
-                                nuevo = base - _to_float(monto)
-                                cur.execute(
-                                    "UPDATE HOJA_TRABAJO SET VALOR = ? WHERE IDCONCEPTO = ? AND IDATRIBUTO = ? AND TRIM(IDENTIDADTERCERO) = TRIM(?)",
-                                    (str(nuevo) if nuevo != 0 else "0", id_concepto, attr_id, cc_identidad),
-                                )
+                        _restar_sumas_por_atributo(
+                            cur,
+                            id_concepto=id_concepto,
+                            identidad_base=cc_identidad,
+                            sumas_por_attr=suma_restar,
+                        )
                     else:
                         cur.execute(
                             "DELETE FROM HOJA_TRABAJO WHERE IDCONCEPTO = ? AND TRIM(IDENTIDADTERCERO) = TRIM(?)",
@@ -993,8 +1033,8 @@ class FirebirdHojaTrabajoRepository:
                     id_atr_razon = pl.get("id_atr_razon")
                     ids_atr_ident = pl.get("ids_atr_ident", []) or []
                     ids_tdoc = pl.get("ids_tdoc", []) or []
-                    ids_tdoc_str = ",".join(str(x) for x in ids_tdoc) if ids_tdoc else "0"
-                    ids_atr_ident_str = ",".join(str(x) for x in ids_atr_ident) if ids_atr_ident else "0"
+                    ids_tdoc_str = _ids_csv(ids_tdoc)
+                    ids_atr_ident_str = _ids_csv(ids_atr_ident)
 
                     for i, it in enumerate(items):
                         ant = (it.get("ant") or "").strip()
@@ -1051,23 +1091,12 @@ class FirebirdHojaTrabajoRepository:
                     filas = pl.get("filas_restaurar", [])
                     idelemento = pl.get("idelemento")
 
-                    for attr_id_str, monto in sumas.items():
-                        try:
-                            attr_id = int(attr_id_str)
-                        except (ValueError, TypeError):
-                            continue
-                        cur.execute(
-                            "SELECT VALOR FROM HOJA_TRABAJO WHERE IDCONCEPTO = ? AND IDATRIBUTO = ? AND TRIM(IDENTIDADTERCERO) = TRIM(?)",
-                            (id_concepto, attr_id, base_id),
-                        )
-                        r = cur.fetchone()
-                        if r:
-                            base = _to_float(r[0])
-                            nuevo = base - _to_float(monto)
-                            cur.execute(
-                                "UPDATE HOJA_TRABAJO SET VALOR = ? WHERE IDCONCEPTO = ? AND IDATRIBUTO = ? AND TRIM(IDENTIDADTERCERO) = TRIM(?)",
-                                (str(nuevo) if nuevo != 0 else "0", id_concepto, attr_id, base_id),
-                            )
+                    _restar_sumas_por_atributo(
+                        cur,
+                        id_concepto=id_concepto,
+                        identidad_base=base_id,
+                        sumas_por_attr=sumas,
+                    )
 
                     identidades_restauradas = set()
                     for f in filas:
