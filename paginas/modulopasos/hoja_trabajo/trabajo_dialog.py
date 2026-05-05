@@ -1518,6 +1518,14 @@ class TrabajoDialog:
                 except Exception:
                     pass
     
+    def _texto_resumen(self, valor) -> str:
+        """Normaliza valores para tarjetas (tercero / resumen): vacío → "—", sin ocultar ceros."""
+        if valor is None:
+            return "—"
+        if isinstance(valor, str) and not valor.strip():
+            return "—"
+        return str(valor).strip()
+
     def _crear_tarjeta_tercero(self):
         """
         Tarjeta con datos del tercero seleccionado o cargado.
@@ -1525,14 +1533,6 @@ class TrabajoDialog:
         """
         t = self.tercero_actual or {}
         campos: list[ft.Row] = []
-
-        def texto_celda(valor) -> str:
-            """None o string en blanco → guión; el resto en string (incluye dígito 0)."""
-            if valor is None:
-                return "—"
-            if isinstance(valor, str) and not valor.strip():
-                return "—"
-            return str(valor).strip()
 
         def fila(label: str, texto: str):
             campos.append(
@@ -1545,25 +1545,25 @@ class TrabajoDialog:
                 )
             )
 
-        fila("Id", texto_celda(t.get("id")))
-        fila("Razón social", texto_celda(t.get("razonsocial")))
+        fila("Id", self._texto_resumen(t.get("id")))
+        fila("Razón social", self._texto_resumen(t.get("razonsocial")))
 
         tipodoc = t.get("tipodocumento")
         if tipodoc is not None and str(tipodoc).strip():
             td_txt = obtener_nombre_tipodoc(tipodoc) or str(tipodoc).strip()
         else:
-            td_txt = texto_celda(tipodoc)
+            td_txt = self._texto_resumen(tipodoc)
         fila("Tipo documento", td_txt)
 
-        fila("Identidad", texto_celda(t.get("identidad")))
-        fila("Dígito verificación", texto_celda(t.get("digitoverificacion")))
+        fila("Identidad", self._texto_resumen(t.get("identidad")))
+        fila("Dígito verificación", self._texto_resumen(t.get("digitoverificacion")))
 
-        fila("Primer nombre", texto_celda(t.get("primernombre")))
-        fila("Segundo nombre", texto_celda(t.get("segundonombre")))
-        fila("Primer apellido", texto_celda(t.get("primerapellido")))
-        fila("Segundo apellido", texto_celda(t.get("segundoapellido")))
+        fila("Primer nombre", self._texto_resumen(t.get("primernombre")))
+        fila("Segundo nombre", self._texto_resumen(t.get("segundonombre")))
+        fila("Primer apellido", self._texto_resumen(t.get("primerapellido")))
+        fila("Segundo apellido", self._texto_resumen(t.get("segundoapellido")))
 
-        fila("Dirección", texto_celda(t.get("direccion")))
+        fila("Dirección", self._texto_resumen(t.get("direccion")))
 
         pais_nom = obtener_nombre_pais(t.get("pais")) or "" if t.get("pais") else ""
         depto_nom = obtener_nombre_departamento(t.get("departamento")) or "" if t.get("departamento") else ""
@@ -1601,7 +1601,7 @@ class TrabajoDialog:
         for clave in sorted(t.keys()):
             if clave in _ya:
                 continue
-            fila(str(clave).replace("_", " "), texto_celda(t.get(clave)))
+            fila(str(clave).replace("_", " "), self._texto_resumen(t.get(clave)))
 
         # Dos columnas: mitad de filas a la izquierda, resto a la derecha.
         n = len(campos)
@@ -1620,14 +1620,6 @@ class TrabajoDialog:
             border_radius=8,
             border=ft.border.all(1, PINK_200),
         )
-
-    def _texto_resumen(self, valor) -> str:
-        """Normaliza valores para tarjetas de resumen sin ocultar ceros."""
-        if valor is None:
-            return "—"
-        if isinstance(valor, str) and not valor.strip():
-            return "—"
-        return str(valor).strip()
 
     def _campos_resumen_clase_cero(self) -> list[tuple[str, str]]:
         """
