@@ -264,44 +264,75 @@ class GenerarXmlPage(ft.Column):
             self.selected_formato and self.step == 1 and resultado_validacion is not None
         )
 
-        chips = [
-            self._chip_paso(1, "Validar"),
-            self._chip_paso(2, "Generar"),
-        ]
-        
-        boton_izq = None
-        boton_der = None
-        
-        if self.selected_formato:
-            if self.step == 1:
-                boton_izq = ft.TextButton(content="Reelegir formato", style=BOTON_SECUNDARIO_SIN, on_click=lambda e: self._open_dialog_formatos())
-                boton_der = ft.Button(content="Continuar con Generar", icon=ft.Icons.ARROW_FORWARD, style=BOTON_PRINCIPAL, on_click=lambda e: self._ir_a_generar())
-            elif self.step == 2:
-                boton_izq = ft.TextButton("Volver a Validar", style=BOTON_SECUNDARIO_SIN, on_click=lambda e: self._ir_a_validar())
-                boton_der = ft.ElevatedButton("Reelegir formato", style=BOTON_PRINCIPAL, icon=ft.Icons.LIST, on_click=lambda e: self._open_dialog_formatos())
-        
-        self.stepper_row.controls = []
-        if boton_izq:
-            self.stepper_row.controls.append(boton_izq)
-        self.stepper_row.controls.extend(chips)
-        if boton_der:
-            self.stepper_row.controls.append(boton_der)
+        boton_izq, boton_der = self._obtener_botones_navegacion_step()
+        self.stepper_row.controls = self._construir_controles_stepper(boton_izq, boton_der)
         self.stepper_row.alignment = "spaceBetween"
+        self.step_content_container.content = self._construir_contenido_step_actual()
 
-        # Selecciona el contenido según el paso
+    def _obtener_botones_navegacion_step(self):
+        """Define botones laterales del stepper según paso y formato seleccionado."""
         if not self.selected_formato:
-            self.step_content_container.content = ft.Column(
+            return None, None
+
+        if self.step == 1:
+            return (
+                ft.TextButton(
+                    content="Reelegir formato",
+                    style=BOTON_SECUNDARIO_SIN,
+                    on_click=lambda _e: self._open_dialog_formatos(),
+                ),
+                ft.Button(
+                    content="Continuar con Generar",
+                    icon=ft.Icons.ARROW_FORWARD,
+                    style=BOTON_PRINCIPAL,
+                    on_click=lambda _e: self._ir_a_generar(),
+                ),
+            )
+
+        if self.step == 2:
+            return (
+                ft.TextButton(
+                    "Volver a Validar",
+                    style=BOTON_SECUNDARIO_SIN,
+                    on_click=lambda _e: self._ir_a_validar(),
+                ),
+                ft.ElevatedButton(
+                    "Reelegir formato",
+                    style=BOTON_PRINCIPAL,
+                    icon=ft.Icons.LIST,
+                    on_click=lambda _e: self._open_dialog_formatos(),
+                ),
+            )
+
+        return None, None
+
+    def _construir_controles_stepper(self, boton_izq, boton_der):
+        """Arma la fila del stepper reutilizando chips y botones laterales."""
+        controls = []
+        if boton_izq:
+            controls.append(boton_izq)
+        controls.extend([self._chip_paso(1, "Validar"), self._chip_paso(2, "Generar")])
+        if boton_der:
+            controls.append(boton_der)
+        return controls
+
+    def _construir_contenido_step_actual(self):
+        """Resuelve contenido central según formato seleccionado y paso activo."""
+        if not self.selected_formato:
+            return ft.Column(
                 [
                     ft.Text("Debe seleccionar un formato para continuar.", size=14),
-                    ft.TextButton(content="Elegir formato", on_click=lambda e: self._open_dialog_formatos(), style=BOTON_SECUNDARIO),
+                    ft.TextButton(
+                        content="Elegir formato",
+                        on_click=lambda _e: self._open_dialog_formatos(),
+                        style=BOTON_SECUNDARIO,
+                    ),
                 ],
                 spacing=10,
             )
-        else:
-            if self.step == 1:
-                self.step_content_container.content = self._render_validar()
-            elif self.step == 2:
-                self.step_content_container.content = self._render_generar()
+        if self.step == 1:
+            return self._render_validar()
+        return self._render_generar()
 
     def _chip_paso(self, numero, texto):
         activo = self.step == numero
@@ -382,7 +413,7 @@ class GenerarXmlPage(ft.Column):
             set_campo_error(campo, None)
         
         errores = False
-        
+
         # Validar campos obligatorios
         requeridos = {
             "concepto": "Concepto",
@@ -392,59 +423,64 @@ class GenerarXmlPage(ft.Column):
             "fechainicial": "Fecha inicial",
             "fechafinal": "Fecha final"
         }
-        
-        for key, nombre_campo in requeridos.items():
-            control = self.campos_modificar.get(key)
-            if control:
-                valor = getattr(control, "value", None) or ""
-                if not aplicar_validacion_error_text(control, valor, validar_campo_obligatorio, nombre_campo=nombre_campo):
-                    errores = True
-        
-        # Validar formato de número de envío
-        numenvio_control = self.campos_modificar.get("numenvio")
-        if numenvio_control and numenvio_control.value:
-            if not aplicar_validacion_error_text(numenvio_control, numenvio_control.value, validar_numero, tipo='int', min_val=1):
-                errores = True
-        
-        # Validar formato de fecha de envío
-        fechaenvio_control = self.campos_modificar.get("fechaenvio")
-        if fechaenvio_control and fechaenvio_control.value:
-            if not aplicar_validacion_error_text(fechaenvio_control, fechaenvio_control.value, validar_fecha):
-                errores = True
-        
-        # Validar formato de hora de envío
-        horaenvio_control = self.campos_modificar.get("horaenvio")
-        if horaenvio_control and horaenvio_control.value:
-            if not aplicar_validacion_error_text(horaenvio_control, horaenvio_control.value, validar_hora):
-                errores = True
-        
-        # Validar formato de fecha inicial
-        fechainicial_control = self.campos_modificar.get("fechainicial")
-        if fechainicial_control and fechainicial_control.value:
-            if not aplicar_validacion_error_text(fechainicial_control, fechainicial_control.value, validar_fecha):
-                errores = True
-        
-        # Validar formato de fecha final
-        fechafinal_control = self.campos_modificar.get("fechafinal")
-        if fechafinal_control and fechafinal_control.value:
-            if not aplicar_validacion_error_text(fechafinal_control, fechafinal_control.value, validar_fecha):
-                errores = True
-        
-        # Validar que fecha inicial < fecha final
-        if (fechainicial_control and fechainicial_control.value and 
-            fechafinal_control and fechafinal_control.value):
-            try:
-                fecha_ini = fechainicial_control.value
-                fecha_fin = fechafinal_control.value
-                if fecha_ini > fecha_fin:
-                    set_campo_error(fechainicial_control, "La fecha inicial debe ser anterior a la fecha final")
-                    set_campo_error(fechafinal_control, "La fecha final debe ser posterior a la fecha inicial")
-                    errores = True
-            except Exception:
-                pass  # Si hay error en la comparación, ya se validó el formato antes
-        
+
+        errores |= self._validar_campos_obligatorios(requeridos)
+        errores |= self._validar_formato_campos_modificar()
+        errores |= self._validar_rango_fechas_modificar()
+
         self._page.update()
         return not errores
+
+    def _validar_campos_obligatorios(self, requeridos: dict) -> bool:
+        """Ejecuta validación de obligatoriedad para campos del formulario."""
+        hay_errores = False
+        for key, nombre_campo in requeridos.items():
+            control = self.campos_modificar.get(key)
+            if not control:
+                continue
+            valor = getattr(control, "value", None) or ""
+            if not aplicar_validacion_error_text(control, valor, validar_campo_obligatorio, nombre_campo=nombre_campo):
+                hay_errores = True
+        return hay_errores
+
+    def _validar_formato_campos_modificar(self) -> bool:
+        """Valida formato de número, fechas y hora en campos diligenciados."""
+        hay_errores = False
+        validaciones = [
+            ("numenvio", validar_numero, {"tipo": "int", "min_val": 1}),
+            ("fechaenvio", validar_fecha, {}),
+            ("horaenvio", validar_hora, {}),
+            ("fechainicial", validar_fecha, {}),
+            ("fechafinal", validar_fecha, {}),
+        ]
+        for key, validador, kwargs in validaciones:
+            control = self.campos_modificar.get(key)
+            if not control or not control.value:
+                continue
+            if not aplicar_validacion_error_text(control, control.value, validador, **kwargs):
+                hay_errores = True
+        return hay_errores
+
+    def _validar_rango_fechas_modificar(self) -> bool:
+        """Valida que la fecha inicial no sea mayor que la fecha final."""
+        fechainicial_control = self.campos_modificar.get("fechainicial")
+        fechafinal_control = self.campos_modificar.get("fechafinal")
+        if not (
+            fechainicial_control
+            and fechainicial_control.value
+            and fechafinal_control
+            and fechafinal_control.value
+        ):
+            return False
+
+        try:
+            if fechainicial_control.value > fechafinal_control.value:
+                set_campo_error(fechainicial_control, "La fecha inicial debe ser anterior a la fecha final")
+                set_campo_error(fechafinal_control, "La fecha final debe ser posterior a la fecha inicial")
+                return True
+        except Exception:
+            return False
+        return False
 
     # ---------- Paso 1: Validar ----------
     def _render_validar(self):
