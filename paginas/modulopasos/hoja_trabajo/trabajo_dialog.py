@@ -780,63 +780,26 @@ class TrabajoDialog:
                 return int(w)
         return self.ANCHO_CONTROL_DEFAULT
 
-    def _crear_control(self, attr, val, tipoacumulado, es_editable):
-        """Crea el control UI según el tipo de atributo."""
-        upper_attr = attr.upper()
-        
-        if self._es_clase_atributo(attr, 2):
-            return self._dropdown_datos_especificos(attr)
-        # País
-        if "PAÍS" in upper_attr or "PAÃ" in upper_attr or "PAIS" in upper_attr:
-            ctrl = self._crear_dropdown_base(
-                attr, PAISES.items(), str(val) if val else None,
-                on_change=self._on_pais_change, disabled=not es_editable
-            )
-            return ctrl
-        
-        # Tipo de documento: solo CLASE=3 (catálogo TIPOSDOC); otras clases quedan como texto.
-        es_tipo_doc_por_nombre = ("DOCUMENTO" in upper_attr and "TIPO" in upper_attr) or attr.strip().lower().startswith(
-            "tipo de documento"
+    def _dropdown_vacio_datos_especificos(
+        self,
+        attr: str,
+        es_editable: bool,
+        on_select,
+    ) -> DropdownCompact:
+        """Dropdown sin opciones iniciales (país/disparadores llenan después)."""
+        return DropdownCompact(
+            label=str(attr or "").strip(),
+            options=[],
+            value=None,
+            on_select=on_select,
+            width=self._ancho_control(attr),
+            expand=False,
+            disabled=not es_editable,
+            tooltip=attr,
         )
-        if es_tipo_doc_por_nombre and self._es_clase_atributo(attr, 3):
-            ctrl = self._crear_dropdown_base(
-                attr, TIPOSDOC.items(), str(val) if val else None,
-                disabled=not es_editable
-            )
-            return ctrl
-        
-        # Departamento
-        if "DEPARTAMENTO" in upper_attr:
-            dep_lbl = str(attr or "").strip()
-            ctrl = DropdownCompact(
-                label=dep_lbl,
-                options=[],
-                value=None,
-                on_select=self._on_departamento_change,
-                width=self._ancho_control(attr),
-                expand=False,
-                disabled=not es_editable,
-                tooltip=attr,
-            )
-            self.drop_dep = ctrl
-            return ctrl
-        
-        # Municipio
-        if "MUNICIPIO" in upper_attr:
-            mun_lbl = str(attr or "").strip()
-            ctrl = DropdownCompact(
-                label=mun_lbl,
-                options=[],
-                value=None,
-                width=self._ancho_control(attr),
-                expand=False,
-                disabled=not es_editable,
-                tooltip=attr,
-            )
-            self.drop_mun = ctrl
-            return ctrl
-        
-        # Campo de texto por defecto (montos/valores: teclado numérico; decimales permitidos en validación)
+
+    def _crear_control_texto_predeterminado(self, attr, val, es_editable):
+        """TextField/multiline por defecto: valores monetarios formateados y teclado numérico cuando aplica."""
         val_texto = str(val or "")
         multiline = len(val_texto) > 80 or self._es_attr_razon_social(attr)
         valor_inicial = (
@@ -849,7 +812,7 @@ class TrabajoDialog:
             if (self._es_atributo_numerico(attr) and not multiline)
             else None
         )
-        ctrl = self._crear_textfield(
+        return self._crear_textfield(
             attr,
             valor_inicial,
             multiline,
@@ -857,7 +820,42 @@ class TrabajoDialog:
             width=self._ancho_control(attr),
             keyboard_type=kbd,
         )
-        return ctrl
+
+    def _crear_control(self, attr, val, tipoacumulado, es_editable):
+        """Crea el control UI según el tipo de atributo."""
+        upper_attr = attr.upper()
+
+        if self._es_clase_atributo(attr, 2):
+            return self._dropdown_datos_especificos(attr)
+        if "PAÍS" in upper_attr or "PAÃ" in upper_attr or "PAIS" in upper_attr:
+            return self._crear_dropdown_base(
+                attr,
+                PAISES.items(),
+                str(val) if val else None,
+                on_change=self._on_pais_change,
+                disabled=not es_editable,
+            )
+
+        es_tipo_doc_por_nombre = (
+            ("DOCUMENTO" in upper_attr and "TIPO" in upper_attr)
+            or attr.strip().lower().startswith("tipo de documento")
+        )
+        if es_tipo_doc_por_nombre and self._es_clase_atributo(attr, 3):
+            return self._crear_dropdown_base(
+                attr, TIPOSDOC.items(), str(val) if val else None, disabled=not es_editable
+            )
+
+        if "DEPARTAMENTO" in upper_attr:
+            self.drop_dep = self._dropdown_vacio_datos_especificos(
+                attr, es_editable, self._on_departamento_change
+            )
+            return self.drop_dep
+
+        if "MUNICIPIO" in upper_attr:
+            self.drop_mun = self._dropdown_vacio_datos_especificos(attr, es_editable, None)
+            return self.drop_mun
+
+        return self._crear_control_texto_predeterminado(attr, val, es_editable)
 
     # ==================== MAPEO Y VALIDACIÓN ====================
     
@@ -1026,6 +1024,15 @@ class TrabajoDialog:
             expand=False,
         )
 
+    def _fila_grid_dos_celdas(
+        self,
+        celda_izq: ft.Container,
+        celda_der: ft.Container,
+        margen_horizontal: int,
+    ) -> ft.Row:
+        """Una fila del grid de dos columnas con el mismo spacing histórico."""
+        return ft.Row([celda_izq, celda_der], spacing=margen_horizontal)
+
     def _fila_razon_social_grid(
         self, ancho_fila: int, ctrl: ft.Control, padding_celda: int
     ) -> ft.Row:
@@ -1057,12 +1064,10 @@ class TrabajoDialog:
                 if pendiente is not None:
                     a1, c1 = pendiente
                     filas.append(
-                        ft.Row(
-                            [
-                                self._wrap_cell_grid(a1, c1, padding_celda),
-                                self._empty_cell_grid(ancho_normal, padding_celda),
-                            ],
-                            spacing=margen_horizontal,
+                        self._fila_grid_dos_celdas(
+                            self._wrap_cell_grid(a1, c1, padding_celda),
+                            self._empty_cell_grid(ancho_normal, padding_celda),
+                            margen_horizontal,
                         )
                     )
                     pendiente = None
@@ -1077,24 +1082,20 @@ class TrabajoDialog:
             else:
                 a1, c1 = pendiente
                 filas.append(
-                    ft.Row(
-                        [
-                            self._wrap_cell_grid(a1, c1, padding_celda),
-                            self._wrap_cell_grid(attr, ctrl, padding_celda),
-                        ],
-                        spacing=margen_horizontal,
+                    self._fila_grid_dos_celdas(
+                        self._wrap_cell_grid(a1, c1, padding_celda),
+                        self._wrap_cell_grid(attr, ctrl, padding_celda),
+                        margen_horizontal,
                     )
                 )
                 pendiente = None
         if pendiente is not None:
             a1, c1 = pendiente
             filas.append(
-                ft.Row(
-                    [
-                        self._wrap_cell_grid(a1, c1, padding_celda),
-                        self._empty_cell_grid(ancho_normal, padding_celda),
-                    ],
-                    spacing=margen_horizontal,
+                self._fila_grid_dos_celdas(
+                    self._wrap_cell_grid(a1, c1, padding_celda),
+                    self._empty_cell_grid(ancho_normal, padding_celda),
+                    margen_horizontal,
                 )
             )
         return filas
@@ -1725,15 +1726,24 @@ class TrabajoDialog:
 
     # ==================== DIÁLOGO DE ELIMINACIÓN ====================
     
+    def _atributos_valor_opciones_filtro_eliminar(self) -> list[tuple]:
+        """Pares (id_atributo, descripción) de atributos CLASE valor (tipo 1) para filtro opcional."""
+        campos = self._obtener_atributos_concepto()
+        return [(a[0], a[1]) for a in campos if a[2] == 1]
+
+    def _on_opcion_eliminar_change(self, e):
+        """Muestra u oculta identidad según radio de alcance."""
+        self.input_identidad.visible = self.opcion.value == "identidad"
+        self.page.update()
+
     def _abrir_dialogo_eliminar(self):
         """
         Abre el diálogo para eliminar registros.
         Solo se usa cuando `abrir()` se invoca con modo='eliminar'.
         """
         self._btn_confirmar_dialogo = None
-        campos = self._obtener_atributos_concepto()
-        opt = [(a[0], a[1]) for a in campos if a[2] == 1]
-        
+        opt = self._atributos_valor_opciones_filtro_eliminar()
+
         self.opcion = ft.RadioGroup(
             value="identidad",
             content=ft.Column([
@@ -1741,7 +1751,7 @@ class TrabajoDialog:
                 ft.Radio(value="concepto", label="Eliminar todo el Concepto", active_color=PINK_200)
             ])
         )
-        
+
         self.input_identidad = ft.TextField(
             label="Identidad",
             visible=True,
@@ -1749,13 +1759,13 @@ class TrabajoDialog:
             label_style=ft.TextStyle(color=GREY_700),
             max_length=20,
         )
-        
+
         self.select_campo = DropdownCompact(
             label="Campo a evaluar",
             options=[ft.DropdownOption(key=f"{id_} | {desc}", text=f"{id_} | {desc}") for id_, desc in opt],
             expand=True,
         )
-        
+
         self.input_filtro = ft.TextField(
             label="Si el valor es menor a",
             hint_text="Filtro opcional",
@@ -1764,12 +1774,8 @@ class TrabajoDialog:
             label_style=ft.TextStyle(color=GREY_700),
             max_length=20,
         )
-        
-        def on_opcion_change(e):
-            self.input_identidad.visible = self.opcion.value == "identidad"
-            self.page.update()
-        
-        self.opcion.on_change = on_opcion_change
+
+        self.opcion.on_change = self._on_opcion_eliminar_change
         self.loader_eliminar = crear_loader_row("Eliminando registros...", size=SIZE_SMALL)
         self.loader_eliminar.visible = False
         content = ft.Column([
