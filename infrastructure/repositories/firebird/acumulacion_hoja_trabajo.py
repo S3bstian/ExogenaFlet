@@ -551,12 +551,7 @@ def _insertar_sets_concepto(
                 )
                 insert_count += 1
                 if mostrar_detalle_set and inserts_detallados < log_max_inserts_detalle:
-                    desc = (attr[3][:25] + "…") if len(attr[3]) > 25 else attr[3]
-                    val_str = str(valor)[:20] + "…" if valor and len(str(valor)) > 20 else str(valor)
-                    print(
-                        f"[ACUMULACIÓN]   Insert concepto={concepto_codigo} elem={tipo_el} "
-                        f"attr={attr[0]} \"{desc}\" valor={val_str} identidad={id_limpio or '-'}"
-                    )
+                    _imprimir_detalle_insert(concepto_codigo, tipo_el, attr, valor, id_limpio)
                     inserts_detallados += 1
             except Exception as e:
                 _registrar_error_insert(total_errores, concepto_codigo, i, attr, id_limpio, e)
@@ -569,6 +564,23 @@ def _insertar_sets_concepto(
 
     _imprimir_resumen_concepto(concepto_codigo, total_sets, insert_count, inserts_detallados)
     return insert_count
+
+
+def _imprimir_detalle_insert(
+    concepto_codigo: Any,
+    tipo_el: str,
+    attr: Tuple[Any, ...],
+    valor: Any,
+    id_limpio: str,
+) -> None:
+    """Imprime línea de detalle de inserción con truncamiento seguro."""
+    desc = (attr[3][:25] + "…") if len(attr[3]) > 25 else attr[3]
+    valor_str = str(valor)
+    val_str = f"{valor_str[:20]}…" if len(valor_str) > 20 else valor_str
+    print(
+        f"[ACUMULACIÓN]   Insert concepto={concepto_codigo} elem={tipo_el} "
+        f"attr={attr[0]} \"{desc}\" valor={val_str} identidad={id_limpio or '-'}"
+    )
 
 
 def _obtener_elemento_concepto(cur: Any, concepto_id: Any) -> Optional[Tuple[Any, ...]]:
