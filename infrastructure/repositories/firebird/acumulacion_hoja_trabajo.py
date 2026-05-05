@@ -636,7 +636,10 @@ def _checkpoint_progreso_insercion_sets(
     if not ((set_idx + 1) % 25 == 0 or (set_idx + 1) == total_sets):
         return
     if total_sets > 0:
-        en_ui(0.33 + 0.67 * (set_idx + 1) / total_sets, f"Concepto {concepto_actual} de {total_conceptos}")
+        en_ui(
+            0.33 + 0.67 * (set_idx + 1) / total_sets,
+            _texto_progreso_concepto(concepto_actual, total_conceptos),
+        )
     raise_if_cancel()
     time.sleep(0.03)
 
@@ -861,6 +864,11 @@ def _checkpoint_concepto(en_ui: Any, raise_if_cancel: Any, valor: float) -> None
     time.sleep(0.03)
 
 
+def _texto_progreso_concepto(concepto_actual: int, total_conceptos: int) -> str:
+    """Construye texto estándar de progreso por concepto."""
+    return f"Concepto {concepto_actual} de {total_conceptos}"
+
+
 def _resultado_concepto_sin_elemento(concepto_codigo: Any) -> Dict[str, Any]:
     """Construye resultado estándar cuando un concepto no tiene elemento válido."""
     return {
@@ -886,7 +894,7 @@ def _procesar_concepto_acumulacion(
 ) -> Dict[str, Any]:
     """Ejecuta el flujo completo de un concepto y retorna métricas del resultado."""
     raise_if_cancel()
-    en_ui(texto=f"Concepto {concepto_actual} de {total_conceptos}")
+    en_ui(texto=_texto_progreso_concepto(concepto_actual, total_conceptos))
 
     setsdatos.clear()
     concepto_codigo = concepto.get("codigo", "N/A")
