@@ -325,6 +325,120 @@ def _cargar_sets_tipo_a(
     return _agregar_rows_con_identidad(datos, 3, setsdatos, identidades_unicas_antes)
 
 
+def _registrar_error_insert(
+    total_errores: List[Dict[str, Any]],
+    concepto_codigo: Any,
+    set_idx: int,
+    attr: Tuple[Any, ...],
+    id_limpio: str,
+    error: Exception,
+) -> None:
+    """Construye y registra un error de inserción para trazabilidad y UI."""
+    error_info = {
+        "concepto": concepto_codigo,
+        "set": set_idx + 1,
+        "atributo_id": attr[0],
+        "atributo_desc": attr[3][:40],
+        "identidad": id_limpio,
+        "error": str(error),
+    }
+    total_errores.append(error_info)
+    print(f"[ERROR] Concepto {concepto_codigo}, Set {set_idx + 1}, Atributo {attr[0]}: {error}")
+
+
+def _imprimir_resumen_concepto(
+    concepto_codigo: Any,
+    total_sets: int,
+    insert_count: int,
+    inserts_detallados: int,
+) -> None:
+    """Imprime resumen de inserciones por concepto."""
+    if insert_count > 0:
+        if inserts_detallados < insert_count:
+            print(
+                f"[ACUMULACIÓN]   Concepto {concepto_codigo}: {total_sets} set(s) → {insert_count} "
+                f"insert(s) (detalle de los primeros {min(inserts_detallados, insert_count)})"
+            )
+        else:
+            print(f"[ACUMULACIÓN]   Concepto {concepto_codigo}: {total_sets} set(s) → {insert_count} insert(s)")
+        return
+    print(f"[ACUMULACIÓN]   Concepto {concepto_codigo}: {total_sets} set(s) → 0 insert(s)")
+
+
+def _insertar_sets_concepto(
+    cur: Any,
+    setsdatos: List[Tuple[Any, ...]],
+    atributos: List[Tuple[Any, ...]],
+    tipo_el: str,
+    concepto: Dict[str, Any],
+    elemento_id: Any,
+    concepto_codigo: Any,
+    concepto_actual: int,
+    total_conceptos: int,
+    log_max_sets_detalle: int,
+    log_max_inserts_detalle: int,
+    total_errores: List[Dict[str, Any]],
+    en_ui: Any,
+    raise_if_cancel: Any,
+) -> int:
+    """Inserta filas de un concepto en HOJA_TRABAJO y retorna cantidad insertada."""
+    total_sets = len(setsdatos)
+    insert_count = 0
+    inserts_detallados = 0
+
+    for i, setdatos in enumerate(setsdatos):
+        raise_if_cancel()
+        contattr = []
+        mostrar_detalle_set = total_sets <= log_max_sets_detalle or i < log_max_sets_detalle
+
+        for idx_attr, attr in enumerate(atributos):
+            if idx_attr % 16 == 0:
+                raise_if_cancel()
+            if attr[0] in contattr:
+                continue
+
+            valor = _resolver_valor_atributo(
+                tipo_el=tipo_el,
+                attr=attr,
+                setdatos=setdatos,
+                concepto_codigo=concepto.get("codigo"),
+                set_idx=i,
+            )
+            idtercero = _obtener_idtercero_por_tipo(tipo_el, setdatos)
+            contattr.append(attr[0])
+            id_limpio = str(idtercero).strip() if idtercero else ""
+
+            try:
+                insert_fila_hoja_trabajo(
+                    cur,
+                    concepto.get("id"),
+                    attr[0],
+                    elemento_id,
+                    valor,
+                    idtercero,
+                )
+                insert_count += 1
+                if mostrar_detalle_set and inserts_detallados < log_max_inserts_detalle:
+                    desc = (attr[3][:25] + "…") if len(attr[3]) > 25 else attr[3]
+                    val_str = str(valor)[:20] + "…" if valor and len(str(valor)) > 20 else str(valor)
+                    print(
+                        f"[ACUMULACIÓN]   Insert concepto={concepto_codigo} elem={tipo_el} "
+                        f"attr={attr[0]} \"{desc}\" valor={val_str} identidad={id_limpio or '-'}"
+                    )
+                    inserts_detallados += 1
+            except Exception as e:
+                _registrar_error_insert(total_errores, concepto_codigo, i, attr, id_limpio, e)
+
+        if (i + 1) % 25 == 0 or (i + 1) == total_sets:
+            if total_sets > 0:
+                en_ui(0.33 + 0.67 * (i + 1) / total_sets, f"Concepto {concepto_actual} de {total_conceptos}")
+            raise_if_cancel()
+            time.sleep(0.03)
+
+    _imprimir_resumen_concepto(concepto_codigo, total_sets, insert_count, inserts_detallados)
+    return insert_count
+
+
 def acumular_conceptos_hoja_trabajo(
     conceptos: List[Dict[str, Any]],
     loader: Any,
@@ -650,77 +764,22 @@ def acumular_conceptos_hoja_trabajo(
                             identidades_unificadas_global += len(identidades_unificadas)
 
                     # -------------------- PASO 4: insertar HOJA_TRABAJO --------------------
-                    total_sets = len(setsdatos)
-                    insert_count = 0
-                    errores_insert = []
-                    # Contador de inserts detallados por concepto (para no saturar)
-                    inserts_detallados = 0
-
-                    for i, setdatos in enumerate(setsdatos):
-                        _raise_if_cancel()
-                        contattr = []
-                        # Mostrar detalle solo para los primeros sets si hay muchos
-                        mostrar_detalle_set = total_sets <= LOG_MAX_SETS_DETALLE or i < LOG_MAX_SETS_DETALLE
-                        for idx_attr, attr in enumerate(atributos):
-                            if idx_attr % 16 == 0:
-                                _raise_if_cancel()
-                            if attr[0] not in contattr:
-                                valor = _resolver_valor_atributo(
-                                    tipo_el=tipo_el,
-                                    attr=attr,
-                                    setdatos=setdatos,
-                                    concepto_codigo=concepto.get("codigo"),
-                                    set_idx=i,
-                                )
-
-                                # Obtener identidad del tercero según el tipo de elemento
-                                idtercero = _obtener_idtercero_por_tipo(tipo_el, setdatos)
-                                
-                                contattr.append(attr[0])
-                                id_limpio = str(idtercero).strip() if idtercero else ""
-                                try:
-                                    insert_fila_hoja_trabajo(
-                                        cur,
-                                        concepto.get("id"),
-                                        attr[0],
-                                        elemento[0],
-                                        valor,
-                                        idtercero,
-                                    )
-                                    insert_count += 1
-                                    # Log detallado solo para los primeros inserts por concepto
-                                    if mostrar_detalle_set and inserts_detallados < LOG_MAX_INSERTS_DETALLE:
-                                        desc = (attr[3][:25] + "…") if len(attr[3]) > 25 else attr[3]
-                                        val_str = str(valor)[:20] + "…" if valor and len(str(valor)) > 20 else str(valor)
-                                        print(f"[ACUMULACIÓN]   Insert concepto={concepto_codigo} elem={tipo_el} attr={attr[0]} \"{desc}\" valor={val_str} identidad={id_limpio or '-'}")
-                                        inserts_detallados += 1
-                                except Exception as e:
-                                    error_info = {
-                                        'concepto': concepto_codigo,
-                                        'set': i+1,
-                                        'atributo_id': attr[0],
-                                        'atributo_desc': attr[3][:40],
-                                        'identidad': id_limpio,
-                                        'error': str(e)
-                                    }
-                                    errores_insert.append(error_info)
-                                    total_errores.append(error_info)
-                                    print(f"[ERROR] Concepto {concepto_codigo}, Set {i+1}, Atributo {attr[0]}: {e}")
-                        
-                        if (i + 1) % 25 == 0 or (i + 1) == total_sets:
-                            if total_sets > 0:
-                                en_ui(0.33 + 0.67 * (i + 1) / total_sets, f"Concepto {concepto_actual} de {total_conceptos}")
-                            _raise_if_cancel()
-                            time.sleep(0.03)
-
-                    # Resumen por concepto: sets e inserts (siempre 1 línea)
-                    if insert_count > 0:
-                        if inserts_detallados < insert_count:
-                            print(f"[ACUMULACIÓN]   Concepto {concepto_codigo}: {total_sets} set(s) → {insert_count} insert(s) (detalle de los primeros {min(inserts_detallados, insert_count)})")
-                        else:
-                            print(f"[ACUMULACIÓN]   Concepto {concepto_codigo}: {total_sets} set(s) → {insert_count} insert(s)")
-                    else:
-                        print(f"[ACUMULACIÓN]   Concepto {concepto_codigo}: {total_sets} set(s) → 0 insert(s)")
+                    insert_count = _insertar_sets_concepto(
+                        cur=cur,
+                        setsdatos=setsdatos,
+                        atributos=atributos,
+                        tipo_el=tipo_el,
+                        concepto=concepto,
+                        elemento_id=elemento[0],
+                        concepto_codigo=concepto_codigo,
+                        concepto_actual=concepto_actual,
+                        total_conceptos=total_conceptos,
+                        log_max_sets_detalle=LOG_MAX_SETS_DETALLE,
+                        log_max_inserts_detalle=LOG_MAX_INSERTS_DETALLE,
+                        total_errores=total_errores,
+                        en_ui=en_ui,
+                        raise_if_cancel=_raise_if_cancel,
+                    )
 
                     total_inserts += insert_count
                     if insert_count == 0 and len(conceptos_sin_filas_en_hoja) < 40:
