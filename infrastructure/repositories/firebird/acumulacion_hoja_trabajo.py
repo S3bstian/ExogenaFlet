@@ -692,6 +692,71 @@ def _limpiar_hoja_por_conceptos_en_transaccion(
             delete_hoja_trabajo_por_id_concepto_cursor(cur, id_prep)
 
 
+def _construir_sets_por_atributos(
+    cur: Any,
+    atributos: List[Tuple[Any, ...]],
+    tipo_el: str,
+    concepto_codigo: Any,
+    concepto_formato: Any,
+    setsdatos: List[Tuple[Any, ...]],
+    advertencias_sin_datos_map: Dict[Tuple[str, str], set],
+    raise_if_cancel: Any,
+) -> Tuple[int, set]:
+    """Construye sets de datos por atributo y retorna total previo + identidades únicas."""
+    attr_count = 0
+    total_registros_antes_unificar = 0
+    identidades_unicas_antes: set = set()
+
+    for attr in atributos:
+        raise_if_cancel()
+        attr_count += 1
+        try:
+            tabla = _tabla_por_tipocontabilidad(attr[2])
+
+            if tabla not in TABLAS_MOVIMIENTOS_PERMITIDAS:
+                print(f"    [WARNING] Atributo {attr_count}: Tabla no permitida '{tabla}', saltando...")
+                continue
+
+            if tipo_el == "T":
+                total_registros_antes_unificar += _cargar_sets_tipo_t_por_atributo(
+                    cur=cur,
+                    attr=attr,
+                    concepto_codigo=concepto_codigo,
+                    concepto_formato=concepto_formato,
+                    setsdatos=setsdatos,
+                    identidades_unicas_antes=identidades_unicas_antes,
+                    advertencias_sin_datos_map=advertencias_sin_datos_map,
+                )
+            elif tipo_el == "C":
+                _cargar_set_tipo_c_por_atributo(
+                    cur=cur,
+                    tabla=tabla,
+                    attr=attr,
+                    concepto_codigo=concepto_codigo,
+                    concepto_formato=concepto_formato,
+                    setsdatos=setsdatos,
+                    advertencias_sin_datos_map=advertencias_sin_datos_map,
+                )
+            elif tipo_el == "B":
+                total_registros_antes_unificar += _cargar_sets_tipo_b(
+                    cur,
+                    setsdatos,
+                    identidades_unicas_antes,
+                )
+            elif tipo_el == "A":
+                total_registros_antes_unificar += _cargar_sets_tipo_a(
+                    cur,
+                    tabla,
+                    setsdatos,
+                    identidades_unicas_antes,
+                )
+        except Exception as e:
+            print(f"[ERROR] Concepto {concepto_codigo}, Atributo {attr[0]}: {e}")
+            raise e
+
+    return total_registros_antes_unificar, identidades_unicas_antes
+
+
 def acumular_conceptos_hoja_trabajo(
     conceptos: List[Dict[str, Any]],
     loader: Any,
@@ -840,57 +905,16 @@ def acumular_conceptos_hoja_trabajo(
                         conceptos_sin_cuentas_en_config.append(str(concepto_codigo))
 
                     # -------------------- PASO 3: sets de cuentas --------------------
-                    attr_count = 0
-                    total_registros_antes_unificar = 0
-                    identidades_unicas_antes = set()
-                    
-                    for attr in atributos:
-                        _raise_if_cancel()
-                        attr_count += 1
-                        try:
-                            tabla = _tabla_por_tipocontabilidad(attr[2])
-
-                            # Validar tabla contra whitelist
-                            if tabla not in TABLAS_MOVIMIENTOS_PERMITIDAS:
-                                print(f"    [WARNING] Atributo {attr_count}: Tabla no permitida '{tabla}', saltando...")
-                                continue
-                                
-                            if tipo_el == "T":
-                                total_registros_antes_unificar += _cargar_sets_tipo_t_por_atributo(
-                                    cur=cur,
-                                    attr=attr,
-                                    concepto_codigo=concepto_codigo,
-                                    concepto_formato=concepto_formato,
-                                    setsdatos=setsdatos,
-                                    identidades_unicas_antes=identidades_unicas_antes,
-                                    advertencias_sin_datos_map=advertencias_sin_datos_map,
-                                )
-                            elif tipo_el == "C":
-                                _cargar_set_tipo_c_por_atributo(
-                                    cur=cur,
-                                    tabla=tabla,
-                                    attr=attr,
-                                    concepto_codigo=concepto_codigo,
-                                    concepto_formato=concepto_formato,
-                                    setsdatos=setsdatos,
-                                    advertencias_sin_datos_map=advertencias_sin_datos_map,
-                                )
-                            elif tipo_el == "B":
-                                total_registros_antes_unificar += _cargar_sets_tipo_b(
-                                    cur,
-                                    setsdatos,
-                                    identidades_unicas_antes,
-                                )
-                            elif tipo_el == "A":
-                                total_registros_antes_unificar += _cargar_sets_tipo_a(
-                                    cur,
-                                    tabla,
-                                    setsdatos,
-                                    identidades_unicas_antes,
-                                )
-                        except Exception as e:
-                            print(f"[ERROR] Concepto {concepto_codigo}, Atributo {attr[0]}: {e}")
-                            raise e
+                    total_registros_antes_unificar, identidades_unicas_antes = _construir_sets_por_atributos(
+                        cur=cur,
+                        atributos=atributos,
+                        tipo_el=tipo_el,
+                        concepto_codigo=concepto_codigo,
+                        concepto_formato=concepto_formato,
+                        setsdatos=setsdatos,
+                        advertencias_sin_datos_map=advertencias_sin_datos_map,
+                        raise_if_cancel=_raise_if_cancel,
+                    )
 
                     en_ui(0.33)
                     _raise_if_cancel()
