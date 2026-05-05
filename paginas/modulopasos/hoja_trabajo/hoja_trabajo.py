@@ -575,13 +575,116 @@ class HojaTrabajoPage(ft.Column):
             return 0
         return min(self.limit, len(self.matriz) - 1)
 
+    def _actualizar_paginacion_footer(self) -> None:
+        """Actualiza visibilidad de botones y texto de paginación."""
+        self.nav_row.controls[0].visible = not self.offset <= 0
+        has_more = getattr(self, "_has_more", False)
+        self.nav_row.controls[2].visible = has_more
+
+        pagina = (self.offset // self.limit) + 1 if self.limit else 1
+        total = getattr(self, "total_identidades", 0) or 0
+        total_paginas = (
+            max(1, (total + self.limit - 1) // self.limit) if self.limit else 1
+        )
+        self.pagination_text_footer.value = pagination_text_value(pagina, total_paginas)
+        self._page.update()
+
+    def _reconstruir_tabla(self, encabezados: list, num_cols: int, n_filas: int) -> None:
+        """Reconstruye columnas y filas desde cero (cuando cambia el esquema de la página)."""
+        self._ultimos_encabezados = tuple(encabezados)
+        col_valor = getattr(self, "_schema_columnas_valor", set())
+
+        anchos = calcular_anchos_columnas(
+            self._formatos_ui_uc, encabezados, col_valor, self._concepto_payload()
+        )
+        indices_valor = indices_columnas_numericas(encabezados, col_valor)
+        numeric_indices = indices_valor
+
+        total_ancho = float(sum(anchos)) if anchos else None
+        self.table.width = total_ancho
+        self.table_shell.width = (
+            int(total_ancho) if total_ancho is not None else None
+        )
+        self.table.fixed_left_columns = 0
+
+        self.table.columns = [
+            fdt.DataColumn2(
+                label=label_columna(i, h or ""),
+                fixed_width=anchos[i] if i < len(anchos) else None,
+                numeric=(i in numeric_indices),
+                heading_row_alignment=ft.MainAxisAlignment.CENTER,
+            )
+            for i, h in enumerate(encabezados)
+        ]
+
+        borde_identidad = ft.border.only(
+            right=ft.border.BorderSide(0.5, GREY_700)
+        )
+        self._indices_valor_cached = indices_valor
+
+        filas_nuevas = []
+        # Una fila por registro real: si no hay suficientes registros, no se rellenan celdas fantasma.
+        for row_idx in range(n_filas):
+            # matriz[0]=encabezado; fila[1]=clave id_concepto|identidad para rows_bd
+            fila = (
+                self.matriz[1 + row_idx] if 1 + row_idx < len(self.matriz) else None
+            )
+            registro = self.rows_bd.get(fila[1]) if fila else None
+
+            celdas = [
+                ft.DataCell(
+                    self._contenido_celda(
+                        c, fila, registro, encabezados, indices_valor, borde_identidad
+                    )
+                )
+                for c in range(num_cols)
+            ]
+            filas_nuevas.append(ft.DataRow(cells=celdas))
+        self.table.rows = filas_nuevas
+
+        # Menos filas que el tamaño de página: la tabla no estira y se ajusta la altura.
+        hr = self.table.heading_row_height or 40
+        dr = self.table.data_row_height or 26
+        sep = float(self.table.divider_thickness or 1)
+        if n_filas < self.limit:
+            self.table.expand = False
+            sep_extra = max(0, n_filas - 1) * sep
+            self.table.height = hr + n_filas * dr + sep_extra + 6
+        else:
+            self.table.expand = True
+            self.table.height = None
+
+    def _actualizar_tabla_paginacion(
+        self, encabezados: list, num_cols: int
+    ) -> None:
+        """Actualiza solo el contenido de celdas (columnas permanecen iguales)."""
+        indices_valor = getattr(self, "_indices_valor_cached", set())
+        borde_identidad = ft.border.only(
+            right=ft.border.BorderSide(0.5, GREY_700)
+        )
+
+        for row_idx in range(len(self.table.rows)):
+            fila = (
+                self.matriz[1 + row_idx] if 1 + row_idx < len(self.matriz) else None
+            )
+            registro = self.rows_bd.get(fila[1]) if fila else None
+
+            for col_idx in range(
+                min(num_cols, len(self.table.rows[row_idx].cells))
+            ):
+                self.table.rows[row_idx].cells[col_idx].content = self._contenido_celda(
+                    col_idx, fila, registro, encabezados, indices_valor, borde_identidad
+                )
+
     def _actualizar_tabla(self):
+        """Reconstruye o actualiza la grilla según cambie el esquema o sea paginación."""
         # Reiniciar mapa identidad -> control en cada reconstrucción de tabla
         self._control_por_identidad = {}
+
         encabezados = self.matriz[0]
         num_cols = len(encabezados)
         n_filas = self._filas_datos_visibles()
-        # Clave para saber si es paginación (mismo concepto): evita reconstruir columnas
+
         encabezados_key = tuple(encabezados)
         es_paginacion = (
             getattr(self, "_ultimos_encabezados", None) == encabezados_key
@@ -589,73 +692,11 @@ class HojaTrabajoPage(ft.Column):
         )
 
         if not es_paginacion:
-            self._ultimos_encabezados = encabezados_key  
-            col_valor = getattr(self, "_schema_columnas_valor", set()) 
-            anchos = calcular_anchos_columnas(
-                self._formatos_ui_uc, encabezados, col_valor, self._concepto_payload()
-            )
-            indices_valor = indices_columnas_numericas(encabezados, col_valor)  
-            numeric_indices = indices_valor
-            total_ancho = float(sum(anchos)) if anchos else None
-            self.table.width = total_ancho
-            self.table_shell.width = int(total_ancho) if total_ancho is not None else None
-            self.table.fixed_left_columns = 0
-
-            self.table.columns = [
-                fdt.DataColumn2(
-                    label=label_columna(i, h or ""),
-                    fixed_width=anchos[i] if i < len(anchos) else None,
-                    numeric=(i in numeric_indices),
-                    heading_row_alignment=ft.MainAxisAlignment.CENTER,
-                )
-                for i, h in enumerate(encabezados)
-            ]
-            borde_identidad = ft.border.only(right=ft.border.BorderSide(0.5, GREY_700))  # Borde vertical solo para columna Identidad
-            self._indices_valor_cached = indices_valor
-            filas_nuevas = []
-            # Solo una fila por registro real: antes se rellenaba hasta `limit` y quedaban filas vacías.
-            for row_idx in range(n_filas):
-                # matriz[0]=encabezado; fila[1]=clave id_concepto|identidad para rows_bd
-                fila = self.matriz[1 + row_idx] if 1 + row_idx < len(self.matriz) else None
-                registro = self.rows_bd.get(fila[1]) if fila else None
-                celdas = [
-                    ft.DataCell(self._contenido_celda(c, fila, registro, encabezados, indices_valor, borde_identidad))
-                    for c in range(num_cols)
-                ]
-                filas_nuevas.append(ft.DataRow(cells=celdas))
-            self.table.rows = filas_nuevas
-            # Menos filas que el tamaño de página: la tabla no estira celdas fantasma; el contenedor deja ver el fondo.
-            hr = self.table.heading_row_height or 40
-            dr = self.table.data_row_height or 26
-            sep = float(self.table.divider_thickness or 1)
-            if n_filas < self.limit:
-                self.table.expand = False
-                sep_extra = max(0, n_filas - 1) * sep
-                self.table.height = hr + n_filas * dr + sep_extra + 6
-            else:
-                self.table.expand = True
-                self.table.height = None
+            self._reconstruir_tabla(encabezados, num_cols, n_filas)
         else:
-            # Paginación: solo actualizar contenido de celdas existentes (columnas no cambian)
-            indices_valor = getattr(self, "_indices_valor_cached", set())
-            borde_identidad = ft.border.only(right=ft.border.BorderSide(0.5, GREY_700))
-            
-            for row_idx in range(len(self.table.rows)):
-                fila = self.matriz[1 + row_idx] if 1 + row_idx < len(self.matriz) else None
-                registro = self.rows_bd.get(fila[1]) if fila else None
-                for col_idx in range(min(num_cols, len(self.table.rows[row_idx].cells))):
-                    self.table.rows[row_idx].cells[col_idx].content = self._contenido_celda(
-                        col_idx, fila, registro, encabezados, indices_valor, borde_identidad
-                    )
+            self._actualizar_tabla_paginacion(encabezados, num_cols)
 
-        self.nav_row.controls[0].visible = not self.offset <= 0
-        has_more = getattr(self, "_has_more", False)
-        self.nav_row.controls[2].visible = has_more
-        pagina = (self.offset // self.limit) + 1 if self.limit else 1
-        total = getattr(self, "total_identidades", 0) or 0
-        total_paginas = max(1, (total + self.limit - 1) // self.limit) if self.limit else 1
-        self.pagination_text_footer.value = pagination_text_value(pagina, total_paginas)
-        self._page.update()
+        self._actualizar_paginacion_footer()
 
     # --- Navegación: paginar, buscar, concepto ---
     def _loader(self, v: bool):
