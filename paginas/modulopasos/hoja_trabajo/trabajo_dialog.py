@@ -1393,8 +1393,6 @@ class TrabajoDialog:
     def _enlazar_tipos_con_subtipos(self):
         """Tras armar el grid: el padre (catálogo clase 2) dispara refresco del dependiente."""
         for attr in self.campos:
-            if not self._padre_catalogo_dependiente(attr):
-                continue
             p = self._padre_catalogo_dependiente(attr)
             if not p:
                 continue
@@ -1413,6 +1411,18 @@ class TrabajoDialog:
 
             parent_ctrl._on_select = _make_handler(attr, prev)
 
+    def _opciones_dropdown_catalogo(
+        self, tabla: str, parent_attr: str | None = None, parent_valor: str | None = None
+    ) -> list:
+        """Obtiene opciones de catálogo simple o dependiente según exista padre."""
+        if not tabla:
+            return []
+        if parent_attr:
+            return self._datos_uc.obtener_opciones_datos_especificos(
+                tabla, parent_attr, parent_valor
+            )
+        return self._datos_uc.obtener_opciones_datos_especificos(tabla)
+
     def _actualizar_opciones_subtipo(self, attr: str, limpiar_seleccion_hijo: bool = True):
         p = self._padre_catalogo_dependiente(attr)
         parent_ctrl, child_ctrl = self.campos.get(p), self.campos.get(attr)
@@ -1420,7 +1430,7 @@ class TrabajoDialog:
             return
         pv = self._key_from_label(parent_ctrl.value) if parent_ctrl.value else None
         tb = (attr or "").strip()
-        opciones = self._datos_uc.obtener_opciones_datos_especificos(tb, p, pv) if tb else []
+        opciones = self._opciones_dropdown_catalogo(tb, p, pv)
 
         child_ctrl.options = [
             ft.DropdownOption(key=str(o["codigo"]), text=(o["descripcion"] or str(o["codigo"])).strip())
@@ -1487,24 +1497,24 @@ class TrabajoDialog:
     
     def _inicializar_dropdowns_dependientes(self):
         """Inicializa los dropdowns que dependen de otros valores."""
-        for k in self.campos.keys():
-            upper_k = k.upper()
-            if ("PAÍS" in upper_k or "PAÃ" in upper_k or "PAIS" in upper_k) and self.campos[k].value:
+        for attr, ctrl in self.campos.items():
+            upper_k = attr.upper()
+            if ("PAÍS" in upper_k or "PAÃ" in upper_k or "PAIS" in upper_k) and ctrl.value:
                 try:
-                    self._llenar_departamentos_por_pais_label(self.campos[k].value)
+                    self._llenar_departamentos_por_pais_label(ctrl.value)
                 except Exception:
                     pass
                 break
-        for k in self.campos.keys():
-            if not self._padre_catalogo_dependiente(k):
-                continue
-            parent_attr = self._padre_catalogo_dependiente(k)
+        for attr in self.campos.keys():
+            parent_attr = self._padre_catalogo_dependiente(attr)
             if not parent_attr:
                 continue
             pc = self.campos.get(parent_attr)
             if pc and pc.value:
                 try:
-                    self._actualizar_opciones_subtipo(k, limpiar_seleccion_hijo=False)
+                    self._actualizar_opciones_subtipo(
+                        attr, limpiar_seleccion_hijo=False
+                    )
                 except Exception:
                     pass
     
