@@ -610,25 +610,7 @@ class TerceroDialog:
                 tercero_mod = dict(t)
                 if not self._aplicar_cambio_en_tercero(tercero_mod, campo, buscar, reemplazar):
                     continue
-                td_txt = tercero_mod.get("tipodocumento")
-                if isinstance(td_txt, str):
-                    cod_tipodoc = obtener_codigo_tipodoc(td_txt)
-                    tercero_mod["tipodocumento"] = int(cod_tipodoc) if cod_tipodoc else 0
-                nat = tercero_mod.get("naturaleza")
-                if isinstance(nat, str):
-                    tercero_mod["naturaleza"] = 0 if nat == "P. Natural" else 1
-                pais_val = tercero_mod.get("pais")
-                if isinstance(pais_val, str):
-                    cod_pais = obtener_codigo_pais(pais_val)
-                    tercero_mod["pais"] = int(cod_pais) if cod_pais else 0
-                depto_val = tercero_mod.get("departamento")
-                if isinstance(depto_val, str):
-                    cod_depto = obtener_codigo_departamento(depto_val, pais_codigo=tercero_mod.get("pais"))
-                    tercero_mod["departamento"] = int(cod_depto) if cod_depto else 0
-                muni_val = tercero_mod.get("municipio")
-                if isinstance(muni_val, str):
-                    cod_mun = obtener_codigo_municipio(muni_val, depto_codigo=tercero_mod.get("departamento"))
-                    tercero_mod["municipio"] = int(cod_mun) if cod_mun else 0
+                self._normalizar_codigos_tercero(tercero_mod)
                 res = self.parent._terceros_uc.actualizar_tercero(tercero_mod)
                 if res and not (isinstance(res, str) and res.startswith("Error")):
                     aplicados += 1
@@ -746,14 +728,14 @@ class TerceroDialog:
     # ==========================================================
     # =============== GUARDAR ==================================
     # ==========================================================
-    def guardar(self, codigo):
-        # recolectar campos
+    def _armar_payload_tercero_desde_form(self, codigo):
+        """Construye payload base desde controles del formulario."""
         identidad = self.dialog.content.controls[0].controls[1].content.value or ""
-        tercero_actualizado = {
+        return {
             "id": codigo,
             "identidad": identidad,
             "tipodocumento": self.dd_documentos.value,
-            "naturaleza":self.dialog.content.controls[0].controls[2].content.value or "",
+            "naturaleza": self.dialog.content.controls[0].controls[2].content.value or "",
             "digitoverificacion": self.dialog.content.controls[0].controls[3].content.value or "",
             "razonsocial": self.dialog.content.controls[1].controls[0].content.value or "",
             "primerapellido": self.dialog.content.controls[2].controls[0].content.value or "",
@@ -766,22 +748,40 @@ class TerceroDialog:
             "municipio": self.dd_municipio.value,
         }
 
-        # mapear nombres a códigos
+    def _normalizar_codigos_tercero(self, tercero_actualizado: dict) -> None:
+        """Mapea nombres de catálogos a códigos persistibles en BD."""
         cod_tipodoc = obtener_codigo_tipodoc(tercero_actualizado["tipodocumento"])
         tercero_actualizado["tipodocumento"] = int(cod_tipodoc) if cod_tipodoc else 0
-        tercero_actualizado["naturaleza"] = 0 if tercero_actualizado["naturaleza"] == "P. Natural" else 1
+        naturaleza = tercero_actualizado.get("naturaleza")
+        if isinstance(naturaleza, str):
+            tercero_actualizado["naturaleza"] = 0 if naturaleza == "P. Natural" else 1
+        elif naturaleza in (0, 1):
+            tercero_actualizado["naturaleza"] = int(naturaleza)
+        else:
+            tercero_actualizado["naturaleza"] = 1
         cod_pais = obtener_codigo_pais(tercero_actualizado["pais"])
         tercero_actualizado["pais"] = int(cod_pais) if cod_pais else 0
-        cod_depto = obtener_codigo_departamento(tercero_actualizado["departamento"], pais_codigo=cod_pais)
+        cod_depto = obtener_codigo_departamento(
+            tercero_actualizado["departamento"], pais_codigo=cod_pais
+        )
         tercero_actualizado["departamento"] = int(cod_depto) if cod_depto else 0
-        cod_mun = obtener_codigo_municipio(tercero_actualizado["municipio"], depto_codigo=cod_depto)
+        cod_mun = obtener_codigo_municipio(
+            tercero_actualizado["municipio"], depto_codigo=cod_depto
+        )
         tercero_actualizado["municipio"] = int(cod_mun) if cod_mun else 0
 
-        # Validación mejorada con error_text
+    def _controles_validacion_guardado(self):
+        """Retorna controles usados en validaciones de guardado."""
+        return (
+            self.dialog.content.controls[0].controls[1].content,  # identidad
+            self.dialog.content.controls[0].controls[3].content,  # dv
+            self.dialog.content.controls[1].controls[0].content,  # razon social
+        )
+
+    def _validar_payload_tercero(self, tercero_actualizado: dict) -> bool:
+        """Valida campos requeridos/numéricos; retorna True si hay errores."""
+        campo_identidad, campo_dv, campo_razon = self._controles_validacion_guardado()
         errores = False
-        
-        # Identidad: obligatoria y solo dígitos (evita guardar texto en campos numéricos de BD).
-        campo_identidad = self.dialog.content.controls[0].controls[1].content
         if not aplicar_validacion_error_text(
             campo_identidad,
             tercero_actualizado["identidad"],
@@ -789,28 +789,33 @@ class TerceroDialog:
             nombre_campo="Número de documento",
         ):
             errores = True
-
-        campo_dv = self.dialog.content.controls[0].controls[3].content
         if not aplicar_validacion_error_text(
             campo_dv,
             tercero_actualizado["digitoverificacion"],
             validar_digito_verificacion_opcional,
         ):
             errores = True
-        
-        # Validar tipo de documento (obligatorio). Dropdown usa error_text en Flet 0.80
         set_campo_error(
             self.dd_documentos,
-            "Tipo de documento es obligatorio" if tercero_actualizado["tipodocumento"] == 0 else None,
+            "Tipo de documento es obligatorio"
+            if tercero_actualizado["tipodocumento"] == 0
+            else None,
         )
         if tercero_actualizado["tipodocumento"] == 0:
             errores = True
-        
-        # Validar razón social (obligatorio)
-        campo_razon = self.dialog.content.controls[1].controls[0].content
-        if not aplicar_validacion_error_text(campo_razon, tercero_actualizado["razonsocial"], validar_campo_obligatorio, nombre_campo="Razón social"):
+        if not aplicar_validacion_error_text(
+            campo_razon,
+            tercero_actualizado["razonsocial"],
+            validar_campo_obligatorio,
+            nombre_campo="Razón social",
+        ):
             errores = True
-        
+        return errores
+
+    def guardar(self, codigo):
+        tercero_actualizado = self._armar_payload_tercero_desde_form(codigo)
+        self._normalizar_codigos_tercero(tercero_actualizado)
+        errores = self._validar_payload_tercero(tercero_actualizado)
         if errores:
             actualizar_mensaje_en_control("Revise los campos marcados con error.", self.mensaje, ft.Colors.RED_700)
             if self.dialog:
