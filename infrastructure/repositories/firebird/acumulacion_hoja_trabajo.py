@@ -40,6 +40,21 @@ def _codigo_cuenta_no_vacio(valor: Any) -> bool:
     return valor is not None and str(valor).strip() != ""
 
 
+def _safe_sum(acc: float, val: Any) -> float:
+    """Suma segura para acumulaciones numéricas tolerando None/valores no numéricos."""
+    if val is None:
+        return acc
+    try:
+        return acc + float(val)
+    except (TypeError, ValueError):
+        return acc
+
+
+def _get_or_default(row: Any, idx: int, default: Any) -> Any:
+    """Retorna `row[idx]` cuando existe; de lo contrario `default`."""
+    return row[idx] if idx < len(row) else default
+
+
 def acumular_conceptos_hoja_trabajo(
     conceptos: List[Dict[str, Any]],
     loader: Any,
@@ -371,14 +386,6 @@ def acumular_conceptos_hoja_trabajo(
                             # Solo mostrar si hay duplicados significativos
                             pass  # Info silenciosa, solo se muestra en resumen si es relevante
 
-# ================= Unificar identidades repetidas: un registro por identidad, sumando campos numéricos
-                    def _safe_sum(acc, val):
-                        if val is None:
-                            return acc
-                        try:
-                            return acc + float(val)
-                        except (TypeError, ValueError):
-                            return acc
                     if tipo_el in ('T', 'B', 'A') and setsdatos:
                         if tipo_el == 'T':
                             grupos = defaultdict(list)
@@ -477,7 +484,7 @@ def acumular_conceptos_hoja_trabajo(
                                 # Mensaje cuando el tipo de elemento no aporta dato (FORMAACUMULADO / UI global).
                                 _no = f"Sin valor"
                                 def _get(idx: int):
-                                    return setdatos[idx] if idx < len(setdatos) else _no
+                                    return _get_or_default(setdatos, idx, _no)
 
                                 # Regla de negocio: atributos clase 3 son manuales en hoja.
                                 match None if attr[5] in set([2,3]) else attr[1]:
@@ -487,28 +494,28 @@ def acumular_conceptos_hoja_trabajo(
                                     # IDs: 50
                                     case 50:
                                         if tipo_el == 'A':
-                                            valor = _get(0)  # codigo
+                                            valor = _get_or_default(setdatos, 0, _no)  # codigo
                                         else:
                                             valor = _no
                                     # ==================== BASE DE RETENCIONES ====================
                                     # IDs: 31
                                     case 31:
                                         if tipo_el == 'T':
-                                            valor = _get(15)  # creditos
+                                            valor = _get_or_default(setdatos, 15, _no)  # creditos
                                         else:
                                             valor = _no
                                     # ==================== CÓDIGO DEL DEPARTAMENTO ====================
                                     # IDs: 1010, 1023, 1067
                                     case x if x in (1010, 1023, 1067):
                                         if tipo_el == 'T':
-                                            valor = _get(10)  # departamento
+                                            valor = _get_or_default(setdatos, 10, _no)  # departamento
                                         else:
                                             valor = _no
                                     # ==================== CÓDIGO DEL MUNICIPIO ====================
                                     # IDs: 1011, 1024, 1068
                                     case x if x in (1011, 1024, 1068):
                                         if tipo_el == 'T':
-                                            valor = _get(11)  # municipio
+                                            valor = _get_or_default(setdatos, 11, _no)  # municipio
                                         else:
                                             valor = _no
                                     # ==================== CONCEPTO ====================
@@ -519,29 +526,29 @@ def acumular_conceptos_hoja_trabajo(
                                     # IDs: 3
                                     case 3:
                                         if tipo_el == 'T':
-                                            valor = _get(15)  # creditos
+                                            valor = _get_or_default(setdatos, 15, _no)  # creditos
                                         elif tipo_el == 'C':
-                                            valor = _get(6)  # creditos
+                                            valor = _get_or_default(setdatos, 6, _no)  # creditos
                                         elif tipo_el == 'A':
-                                            valor = _get(6)  # creditos
+                                            valor = _get_or_default(setdatos, 6, _no)  # creditos
                                         else:
                                             valor = _no
                                     # ==================== DEPARTAMENTO ====================
                                     # IDs: 1014, 1052
                                     case x if x in (1014, 1052):
                                         if tipo_el == 'T':
-                                            valor = _get(10)  # departamento
+                                            valor = _get_or_default(setdatos, 10, _no)  # departamento
                                         else:
                                             valor = _no
                                     # ==================== DÉBITOS ====================
                                     # IDs: 2
                                     case 2:
                                         if tipo_el == 'T':
-                                            valor = _get(14)  # debitos
+                                            valor = _get_or_default(setdatos, 14, _no)  # debitos
                                         elif tipo_el == 'C':
-                                            valor = _get(5)  # debitos
+                                            valor = _get_or_default(setdatos, 5, _no)  # debitos
                                         elif tipo_el == 'A':
-                                            valor = _get(5)  # debitos
+                                            valor = _get_or_default(setdatos, 5, _no)  # debitos
                                         else:
                                             valor = _no
                                     # ==================== DÍGITO DE VERIFICACIÓN ====================
