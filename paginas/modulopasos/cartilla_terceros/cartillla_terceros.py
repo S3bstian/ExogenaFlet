@@ -237,24 +237,47 @@ class CartillaTercerosPage(ft.Column):
 
     # ===================== FUNCIONES =====================
 
+    def _filtro_busqueda_actual(self) -> str:
+        """Texto de búsqueda normalizado desde el campo de filtro."""
+        return (self.search_field.value or "").strip()
+
+    def _filtro_terceros(self, texto: str = ""):
+        """Construye el filtro para el caso de uso según modo dividir y texto de búsqueda."""
+        texto = (texto or "").strip()
+        if self.dividir_nombres_modo:
+            return ["DIVIDIR", texto] if texto else ["DIVIDIR"]
+        return [texto] if texto else None
+
+    def _consultar_terceros(self, texto: str = ""):
+        """Consulta terceros paginados con el filtro correspondiente al estado actual."""
+        filtro = self._filtro_terceros(texto)
+        if filtro is None:
+            return self._terceros_uc.obtener_terceros(
+                offset=self.offset,
+                limit=self.limit,
+            )
+        return self._terceros_uc.obtener_terceros(
+            offset=self.offset,
+            limit=self.limit,
+            filtro=filtro,
+        )
+
+    def _actualizar_estado_terceros(self, datos, total) -> None:
+        """Sincroniza estado de terceros en memoria antes de renderizar tabla."""
+        self.terceros = datos or []
+        self.total_terceros = total or 0
+        self.terceros_filtrados = self.terceros.copy()
+
     def cargar_terceros(self):
         self._mostrar_loader(True)
-        filtro = (self.search_field.value or "").strip()
+        texto = self._filtro_busqueda_actual()
 
         def _worker():
             try:
-                if self.dividir_nombres_modo:
-                    if filtro:
-                        datos, total = self._terceros_uc.obtener_terceros(offset=self.offset, limit=self.limit, filtro=["DIVIDIR", filtro])
-                    else:
-                        datos, total = self._terceros_uc.obtener_terceros(offset=self.offset, limit=self.limit, filtro=["DIVIDIR"])
-                else:
-                    datos, total = self._terceros_uc.obtener_terceros(offset=self.offset, limit=self.limit)
+                datos, total = self._consultar_terceros(texto)
                 if not datos:
                     self.mostrar_mensaje("No se encontraron terceros.", 8888)
-                self.terceros = datos or []
-                self.total_terceros = total or 0
-                self.terceros_filtrados = self.terceros.copy()
+                self._actualizar_estado_terceros(datos, total)
                 self._actualizar_tabla()
             except Exception as e:
                 self.terceros = []
@@ -269,35 +292,11 @@ class CartillaTercerosPage(ft.Column):
         if nuevo_offset < 0:
             return
         self.offset = nuevo_offset
-        filtro = (self.search_field.value or "").strip()
+        texto = self._filtro_busqueda_actual()
         self._mostrar_loader(True)
         try:
-            if self.dividir_nombres_modo:
-                if filtro:
-                    self.terceros, self.total_terceros = self._terceros_uc.obtener_terceros(
-                        offset=self.offset,
-                        limit=self.limit,
-                        filtro=["DIVIDIR", filtro],
-                    )
-                else:
-                    self.terceros, self.total_terceros = self._terceros_uc.obtener_terceros(
-                        offset=self.offset,
-                        limit=self.limit,
-                        filtro=["DIVIDIR"],
-                    )
-            else:
-                if filtro:
-                    self.terceros, self.total_terceros = self._terceros_uc.obtener_terceros(
-                        offset=self.offset,
-                        limit=self.limit,
-                        filtro=[filtro],
-                    )
-                else:
-                    self.terceros, self.total_terceros = self._terceros_uc.obtener_terceros(
-                        offset=self.offset,
-                        limit=self.limit,
-                    )
-            self.terceros_filtrados = self.terceros.copy()
+            datos, total = self._consultar_terceros(texto)
+            self._actualizar_estado_terceros(datos, total)
             self._actualizar_tabla()
         except Exception as e:
             self.mostrar_mensaje(f"Error cargando página: {e}", 8888)
@@ -468,37 +467,81 @@ class CartillaTercerosPage(ft.Column):
     def _buscar_ejecutar(self, texto: str):
         self._mostrar_loader(True)
         try:
-            if self.dividir_nombres_modo:
-                if texto:
-                    self.terceros, self.total_terceros = self._terceros_uc.obtener_terceros(
-                        offset=self.offset,
-                        limit=self.limit,
-                        filtro=["DIVIDIR", texto],
-                    )
-                else:
-                    self.terceros, self.total_terceros = self._terceros_uc.obtener_terceros(
-                        offset=self.offset,
-                        limit=self.limit,
-                        filtro=["DIVIDIR"],
-                    )
-            else:
-                if texto:
-                    self.terceros, self.total_terceros = self._terceros_uc.obtener_terceros(
-                        offset=self.offset,
-                        limit=self.limit,
-                        filtro=[texto],
-                    )
-                else:
-                    self.terceros, self.total_terceros = self._terceros_uc.obtener_terceros(
-                        offset=self.offset,
-                        limit=self.limit,
-                    )
-            self.terceros_filtrados = self.terceros.copy()
+            datos, total = self._consultar_terceros(texto)
+            self._actualizar_estado_terceros(datos, total)
             self._actualizar_tabla()
         except Exception as ex:
             self._mostrar_mensaje(f"Error buscando: {ex}", True)
         finally:
             self._mostrar_loader(False)
+
+    def _crear_accion_dividir(self, identidad, tt_ctrl_fila):
+        chk = ft.Checkbox(
+            value=identidad in self.dividir_nombres_seleccion,
+            active_color=PINK_200,
+            check_color=ft.Colors.WHITE,
+            tooltip=tt_ctrl_fila,
+            on_change=lambda e, idt=identidad: self._toggle_dividir_nombres(
+                idt, e.control.value
+            ),
+        )
+        return self._data_cell_cartilla(chk), chk
+
+    def _crear_accion_edicion(self, tercero, tt_ctrl_fila):
+        btn_edit = ft.IconButton(
+            icon=ft.Icons.EDIT,
+            tooltip=tt_ctrl_fila,
+            style=BOTON_SECUNDARIO_SIN,
+            icon_size=18,
+            on_click=lambda e, data=tercero: self.dialog_tercero.abrir(data),
+        )
+        celda_accion = self._data_cell_cartilla(
+            ft.Row(
+                [
+                    btn_edit,
+                    ft.IconButton(
+                        icon=ft.Icons.CLOSE,
+                        tooltip="Eliminar tercero",
+                        style=BOTON_SECUNDARIO_SIN,
+                        icon_size=18,
+                        on_click=lambda e, data=tercero: self.mostrar_mensaje(
+                            f"¿Desea eliminar el tercero {data['razonsocial']}?",
+                            5555,
+                            data["identidad"],
+                        ),
+                    ),
+                ],
+                spacing=-10,
+                alignment=ft.MainAxisAlignment.CENTER,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+        )
+        return celda_accion, btn_edit
+
+    def _total_paginas(self) -> int:
+        """Calcula total de páginas con fallback seguro cuando no hay resultados o límite inválido."""
+        if not self.limit:
+            return 1
+        return (
+            (self.total_terceros + self.limit - 1) // self.limit
+            if self.total_terceros > 0
+            else 1
+        )
+
+    def _pagina_actual(self) -> int:
+        """Número de página actual (1-based)."""
+        return (self.offset // self.limit) + 1 if self.limit else 1
+
+    def _actualizar_controles_paginacion(self) -> None:
+        """Sincroniza botones anterior/siguiente y texto de paginación del footer."""
+        self.nav_row.controls[0].visible = not self.offset <= 0
+        total_paginas = self._total_paginas()
+        pagina = self._pagina_actual()
+        self.nav_row.controls[2].visible = pagina < total_paginas
+        total = self.total_terceros if self.total_terceros > 0 else None
+        self.pagination_text_footer.value = pagination_text_value(
+            pagina, total_paginas, total
+        )
 
     def _actualizar_tabla(self):
         self.table.rows.clear()
@@ -512,43 +555,13 @@ class CartillaTercerosPage(ft.Column):
             tt_ctrl_fila = tooltip(TooltipId.CARTILLA_CTRL_IDENTIDAD, identidad=identidad_str)
 
             if self.dividir_nombres_modo:
-                chk = ft.Checkbox(
-                    value=identidad in self.dividir_nombres_seleccion,
-                    active_color=PINK_200,
-                    check_color=ft.Colors.WHITE,
-                    tooltip=tt_ctrl_fila,
-                    on_change=lambda e, idt=identidad: self._toggle_dividir_nombres(idt, e.control.value),
+                celda_accion, control_focus = self._crear_accion_dividir(
+                    identidad, tt_ctrl_fila
                 )
-                celda_accion = self._data_cell_cartilla(chk)
-                control_focus = chk
             else:
-                btn_edit = ft.IconButton(
-                    icon=ft.Icons.EDIT,
-                    tooltip=tt_ctrl_fila,
-                    style=BOTON_SECUNDARIO_SIN,
-                    icon_size=18,
-                    on_click=lambda e, data=tercero: self.dialog_tercero.abrir(data),
+                celda_accion, control_focus = self._crear_accion_edicion(
+                    tercero, tt_ctrl_fila
                 )
-                celda_accion = self._data_cell_cartilla(
-                    ft.Row(
-                        [
-                            btn_edit,
-                            ft.IconButton(
-                                icon=ft.Icons.CLOSE,
-                                tooltip="Eliminar tercero",
-                                style=BOTON_SECUNDARIO_SIN,
-                                icon_size=18,
-                                on_click=lambda e, data=tercero: self.mostrar_mensaje(
-                                    f"¿Desea eliminar el tercero {data["razonsocial"]}?", 5555, data["identidad"]
-                                ),
-                            ),
-                        ],
-                        spacing=-10,
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    )
-                )
-                control_focus = btn_edit
 
             self._control_por_identidad[identidad_str] = control_focus
 
@@ -564,16 +577,7 @@ class CartillaTercerosPage(ft.Column):
             )
             self.table.rows.append(fila)
 
-        self.nav_row.controls[0].visible = not self.offset <= 0
-        if self.limit:
-            total_paginas = (self.total_terceros + self.limit - 1) // self.limit if self.total_terceros > 0 else 1
-        else:
-            total_paginas = 1
-        pagina = (self.offset // self.limit) + 1 if self.limit else 1
-        has_next = pagina < total_paginas
-        self.nav_row.controls[2].visible = has_next
-        total = self.total_terceros if self.total_terceros > 0 else None
-        self.pagination_text_footer.value = pagination_text_value(pagina, total_paginas, total)
+        self._actualizar_controles_paginacion()
         self._page.update()
 
     def _actualizar_columna_tabla(self):
