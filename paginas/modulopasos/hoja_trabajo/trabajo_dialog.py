@@ -192,90 +192,126 @@ class TrabajoDialog:
         - `_guardar_nuevo()`  si modo = 'nuevo'
         - `_guardar_edicion()` si modo = 'editar'
         """
-        # Validar formulario antes de guardar
         if not self._validar_formulario():
-            # Si falta tercero en nuevo, _validar_formulario ya dejó un mensaje explícito; no lo pisamos.
-            if not (self.modo == "nuevo" and not self.tercero_actual):
-                actualizar_mensaje_en_control(
-                    "Revise los campos marcados con error antes de guardar.", self.mensaje
-                )
+            self._mostrar_error_validacion_guardado()
             self.page.update()
             return
-        
+
+        self._guardar_segun_modo()
+
+    def _mostrar_error_validacion_guardado(self) -> None:
+        """
+        Mensaje estándar de error de validación.
+        En `nuevo` sin tercero, `_validar_formulario` ya deja un mensaje específico.
+        """
+        if self.modo == "nuevo" and not self.tercero_actual:
+            return
+        actualizar_mensaje_en_control(
+            "Revise los campos marcados con error antes de guardar.", self.mensaje
+        )
+
+    def _guardar_segun_modo(self) -> None:
+        """Despacha el guardado según el modo activo del diálogo."""
         if self.modo == "editar":
             self._guardar_edicion()
-        elif self.modo == "fideicomiso_masivo":
+            return
+        if self.modo == "fideicomiso_masivo":
             self._guardar_fideicomiso_masivo()
-        else:
-            self._guardar_nuevo()
+            return
+        self._guardar_nuevo()
     
     def _validar_formulario(self):
         """
         Valida todos los campos del formulario usando error_text.
         Retorna True si todos los campos son válidos, False en caso contrario.
         """
-        # Limpiar errores previos (Flet 0.80: TextField usa .error)
+        self._limpiar_errores_campos()
+
+        if self.modo == "fideicomiso_masivo":
+            return self._validar_formulario_fideicomiso()
+
+        if not self._validar_tercero_requerido_nuevo():
+            self.page.update()
+            return False
+
+        errores = self._validar_campos_formulario_principal()
+        self.page.update()
+        return not errores
+
+    def _limpiar_errores_campos(self) -> None:
+        """Limpia estado visual de error en todos los controles editables."""
         for campo in self.campos.values():
             set_campo_error(campo, None)
 
-        if self.modo == "fideicomiso_masivo":
-            tipo_ok = False
-            subtipo_ok = False
-            for attr, ctrl in self.campos.items():
-                key = str(attr or "").strip().upper()
-                valor = str(getattr(ctrl, "value", "") or "").strip()
-                if key == "TIPO DE FIDEICOMISO":
-                    tipo_ok = bool(valor)
-                    if not tipo_ok:
-                        set_campo_error(ctrl, "Seleccione el tipo de fideicomiso.")
-                elif key == "SUBTIPO DE FIDEICOMISO":
-                    subtipo_ok = bool(valor)
-                    if not subtipo_ok:
-                        set_campo_error(ctrl, "Seleccione el subtipo de fideicomiso.")
-            self.page.update()
-            return tipo_ok and subtipo_ok
-        
-        if self.modo == "nuevo" and not self.tercero_actual:
-            actualizar_mensaje_en_control(
-                "Seleccione un tercero antes de guardar.",
-                self.mensaje,
-            )
-            self.page.update()
-            return False
-        
+    def _validar_formulario_fideicomiso(self) -> bool:
+        """Valida selección de tipo/subtipo cuando el diálogo está en modo masivo."""
+        tipo_ok = False
+        subtipo_ok = False
+        for attr, ctrl in self.campos.items():
+            key = str(attr or "").strip().upper()
+            valor = str(getattr(ctrl, "value", "") or "").strip()
+            if key == "TIPO DE FIDEICOMISO":
+                tipo_ok = bool(valor)
+                if not tipo_ok:
+                    set_campo_error(ctrl, "Seleccione el tipo de fideicomiso.")
+            elif key == "SUBTIPO DE FIDEICOMISO":
+                subtipo_ok = bool(valor)
+                if not subtipo_ok:
+                    set_campo_error(ctrl, "Seleccione el subtipo de fideicomiso.")
+        self.page.update()
+        return tipo_ok and subtipo_ok
+
+    def _validar_tercero_requerido_nuevo(self) -> bool:
+        """En modo nuevo exige tercero seleccionado antes de persistir."""
+        if self.modo != "nuevo" or self.tercero_actual:
+            return True
+        actualizar_mensaje_en_control(
+            "Seleccione un tercero antes de guardar.",
+            self.mensaje,
+        )
+        return False
+
+    def _valor_control_normalizado(self, ctrl, attr: str) -> str:
+        """Lee `value` de un control y normaliza formato monetario cuando aplica."""
+        valor = ctrl.value if hasattr(ctrl, "value") else None
+        valor_str = str(valor).strip() if valor else ""
+        if valor_str and self._es_atributo_valor(attr):
+            return self._normalizar_valor_monetario(valor_str)
+        return valor_str
+
+    def _validar_campos_formulario_principal(self) -> bool:
+        """Valida campos del formulario estándar (nuevo/editar). Retorna `True` si hay errores."""
         errores = False
-        
-        # Validar campos obligatorios y tipos según atributos_info
+
         for attr, ctrl in self.campos.items():
             tipoacumulado = self.atributos_info.get(attr, 0)
-            
             # Los de tercero no están en el grid; vienen de la tarjeta / selección.
             if self._es_campo_de_tercero(tipoacumulado, attr):
                 continue
-            
-            valor = ctrl.value if hasattr(ctrl, "value") else None
-            valor_str = str(valor).strip() if valor else ""
-            if valor_str and self._es_atributo_valor(attr):
-                valor_str = self._normalizar_valor_monetario(valor_str)
-            
-            # Validar campo obligatorio "Número de Identificación"
+
+            valor_str = self._valor_control_normalizado(ctrl, attr)
+
             if self._es_atributo_identificacion(attr):
-                if not aplicar_validacion_error_text(ctrl, valor_str, validar_campo_obligatorio, nombre_campo="Número de Identificación"):
+                if not aplicar_validacion_error_text(
+                    ctrl,
+                    valor_str,
+                    validar_campo_obligatorio,
+                    nombre_campo="Número de Identificación",
+                ):
                     errores = True
                     continue
-            
-            # Validar números según el tipo de atributo
-            # Buscar si el atributo es numérico según su descripción
+
             if valor_str and self._es_atributo_numerico(attr):
-                if not aplicar_validacion_error_text(ctrl, valor_str, validar_numero, tipo="float", min_val=0):
+                if not aplicar_validacion_error_text(
+                    ctrl, valor_str, validar_numero, tipo="float", min_val=0
+                ):
                     errores = True
                     continue
             if valor_str and self._es_atributo_correo(attr):
                 if not aplicar_validacion_error_text(ctrl, valor_str, validar_email):
                     errores = True
-        
-        self.page.update()
-        return not errores
+
+        return errores
 
 
     def _post_guardar(self, resultado):
@@ -289,18 +325,22 @@ class TrabajoDialog:
 
     def _guardar_nuevo(self):
         """Guarda un nuevo grupo de filas de hoja de trabajo (modo 'nuevo')."""
-        datos_para_guardar = self._recopilar_datos_formulario()
-        self._asignar_concepto_y_formato(datos_para_guardar)
-        resultado = self._mutar_hoja().crear_entrada_hoja_trabajo(datos_para_guardar)
-        self._post_guardar(resultado)
+        self._guardar_con_payload(
+            lambda payload: self._mutar_hoja().crear_entrada_hoja_trabajo(payload)
+        )
 
     def _guardar_edicion(self):
         """Actualiza un registro existente de hoja de trabajo (modo 'editar')."""
-        datos_para_guardar = self._recopilar_datos_formulario()
-        self._asignar_concepto_y_formato(datos_para_guardar)
-        resultado = self._mutar_hoja().actualizar_entrada_hoja_trabajo(
-            self.id_concepto, self.identidad, datos_para_guardar
+        self._guardar_con_payload(
+            lambda payload: self._mutar_hoja().actualizar_entrada_hoja_trabajo(
+                self.id_concepto, self.identidad, payload
+            )
         )
+
+    def _guardar_con_payload(self, accion_guardado):
+        """Construye payload y ejecuta una acción de persistencia reutilizable."""
+        datos_para_guardar = self._construir_payload_guardado()
+        resultado = accion_guardado(datos_para_guardar)
         self._post_guardar(resultado)
 
     def _fideicomiso_ui_ocupado(self, ocupado: bool) -> None:
@@ -315,18 +355,19 @@ class TrabajoDialog:
 
     def _valores_formulario_fideicomiso(self) -> tuple[str, str, str, str]:
         """tipo, subtipo nuevos y filtros por valor actual (strings)."""
-        d = self._recopilar_datos_formulario()
-
-        def pick(desc: str) -> str:
-            for k, v in d.items():
-                if str(k or "").strip().upper() == desc:
-                    return str(v or "").strip()
-            return ""
-
-        tipo, subtipo = pick("TIPO DE FIDEICOMISO"), pick("SUBTIPO DE FIDEICOMISO")
+        datos_formulario = self._recopilar_datos_formulario()
+        tipo = self._valor_por_descripcion(datos_formulario, "TIPO DE FIDEICOMISO")
+        subtipo = self._valor_por_descripcion(datos_formulario, "SUBTIPO DE FIDEICOMISO")
         ft = str(self.filtro_tipo_actual.value or "").strip() if self.filtro_tipo_actual else ""
         fs = str(self.filtro_subtipo_actual.value or "").strip() if self.filtro_subtipo_actual else ""
         return tipo, subtipo, ft, fs
+
+    def _valor_por_descripcion(self, datos: dict, descripcion_mayuscula: str) -> str:
+        """Busca valor por descripción normalizada del atributo en un payload de formulario."""
+        for k, v in datos.items():
+            if str(k or "").strip().upper() == descripcion_mayuscula:
+                return str(v or "").strip()
+        return ""
 
     def _guardar_fideicomiso_masivo(self):
         """Aplica tipo/subtipo de fideicomiso (en hilo; usa loader reutilizable)."""
@@ -335,22 +376,44 @@ class TrabajoDialog:
         self.page.update()
 
         def _worker():
-            res = self._mutar_hoja().actualizar_fideicomiso_masivo(
-                self.concepto, tipo, subtipo,
-                filtro_tipo_actual=filtro_tipo, filtro_subtipo_actual=filtro_subtipo,
+            resultado = self._ejecutar_fideicomiso_masivo(
+                tipo=tipo,
+                subtipo=subtipo,
+                filtro_tipo=filtro_tipo,
+                filtro_subtipo=filtro_subtipo,
             )
-            self._fideicomiso_ui_ocupado(False)
-            ok = isinstance(res, str) and res.lower().startswith("tipo y subtipo")
-            if ok:
-                actualizar_mensaje_en_control(res, self.mensaje, ft.Colors.GREEN_300)
-                self.parent.cargar_datos()
-            else:
-                actualizar_mensaje_en_control(
-                    res if isinstance(res, str) else "Error aplicando fideicomiso masivo.", self.mensaje
-                )
-            self.page.update()
+            self._procesar_resultado_fideicomiso_masivo(resultado)
 
         self.page.run_thread(_worker)
+
+    def _ejecutar_fideicomiso_masivo(
+        self, *, tipo: str, subtipo: str, filtro_tipo: str, filtro_subtipo: str
+    ):
+        """Invoca el caso de uso de actualización masiva con los filtros seleccionados."""
+        return self._mutar_hoja().actualizar_fideicomiso_masivo(
+            self.concepto,
+            tipo,
+            subtipo,
+            filtro_tipo_actual=filtro_tipo,
+            filtro_subtipo_actual=filtro_subtipo,
+        )
+
+    def _fideicomiso_masivo_exitoso(self, resultado) -> bool:
+        """Determina éxito con la misma regla histórica basada en el texto de retorno."""
+        return isinstance(resultado, str) and resultado.lower().startswith("tipo y subtipo")
+
+    def _procesar_resultado_fideicomiso_masivo(self, resultado) -> None:
+        """Aplica feedback de UI, recarga y cierre de estado para el guardado masivo."""
+        self._fideicomiso_ui_ocupado(False)
+        if self._fideicomiso_masivo_exitoso(resultado):
+            actualizar_mensaje_en_control(resultado, self.mensaje, ft.Colors.GREEN_300)
+            self.parent.cargar_datos()
+        else:
+            actualizar_mensaje_en_control(
+                resultado if isinstance(resultado, str) else "Error aplicando fideicomiso masivo.",
+                self.mensaje,
+            )
+        self.page.update()
 
     # ==================== UTILIDADES ====================
     
@@ -478,6 +541,19 @@ class TrabajoDialog:
         """Indica si self.concepto viene como dict con codigo y formato."""
         return isinstance(self.concepto, dict) and "codigo" in self.concepto and "formato" in self.concepto
 
+    def _obtener_atributos_concepto(self):
+        """
+        Retorna atributos del concepto activo con compatibilidad para payload dict (codigo/formato)
+        y formato legacy.
+        """
+        if self._concepto_tiene_codigo_y_formato():
+            concepto_ref = {
+                "codigo": str(self.concepto["codigo"]),
+                "formato": str(self.concepto["formato"]),
+            }
+            return self._formatos_uc.obtener_atributos_por_concepto(concepto_ref)
+        return self._formatos_uc.obtener_atributos_por_concepto(self.concepto)
+
     def _asignar_concepto_y_formato(self, datos_destino: dict):
         """
         Asigna Concepto/FORMATO en el payload de trabajo.
@@ -488,6 +564,12 @@ class TrabajoDialog:
             datos_destino["FORMATO"] = self.concepto["formato"]
         else:
             datos_destino["Concepto"] = self.concepto
+
+    def _construir_payload_guardado(self) -> dict:
+        """Arma payload final de guardado con datos de formulario y metadatos de concepto/formato."""
+        payload = self._recopilar_datos_formulario()
+        self._asignar_concepto_y_formato(payload)
+        return payload
 
     def _control_usa_key_from_label(self, ctrl) -> bool:
         """True si el control requiere extraer código desde etiqueta 'key | name'."""
@@ -523,11 +605,7 @@ class TrabajoDialog:
         Descripciones de atributos con tipoacumulado < 9000, ordenadas por ID de atributo
         (misma regla que hoja_tools_front.construir_esquema / columnas de la grilla).
         """
-        if self._concepto_tiene_codigo_y_formato():
-            c = {"codigo": str(self.concepto["codigo"]), "formato": str(self.concepto["formato"])}
-            lista = self._formatos_uc.obtener_atributos_por_concepto(c)
-        else:
-            lista = self._formatos_uc.obtener_atributos_por_concepto(self.concepto)
+        lista = self._obtener_atributos_concepto()
         attrs = sorted(
             lista,
             key=lambda a: int(a[0]) if (isinstance(a[0], (int, float)) or str(a[0]).isdigit()) else 0,
@@ -552,11 +630,7 @@ class TrabajoDialog:
 
     def _cargar_atributos_info(self):
         """Carga y organiza la información de atributos del concepto."""
-        if self._concepto_tiene_codigo_y_formato():
-            c = {"codigo": str(self.concepto["codigo"]), "formato": str(self.concepto["formato"])}
-            lista_campos = self._formatos_uc.obtener_atributos_por_concepto(c)
-        else:
-            lista_campos = self._formatos_uc.obtener_atributos_por_concepto(self.concepto)
+        lista_campos = self._obtener_atributos_concepto()
         # Tupla: (ID, NOMBRE, DESCRIPCION, CLASE, TIPOACUMULADO); tipoacumulado < 9000; orden por ID como la grilla
         lista_campos_sincab = sorted(
             [campo for campo in lista_campos if len(campo) >= 5 and (campo[4] or 0) < 9000],
@@ -863,7 +937,11 @@ class TrabajoDialog:
     
     def _asegurar_datos_completos(self):
         """Garantiza que self.datos tenga todas las columnas del concepto."""
-        attrs = [c[2] for c in self._formatos_uc.obtener_atributos_por_concepto(self.concepto) if len(c) >= 5 and (c[4] or 0) < 9000]
+        attrs = [
+            c[2]
+            for c in self._obtener_atributos_concepto()
+            if len(c) >= 5 and (c[4] or 0) < 9000
+        ]
         if self.modo == "nuevo" and not self.tercero_actual:
             self.datos = {d: "" for d in attrs}
             self._asignar_concepto_y_formato(self.datos)
@@ -1449,11 +1527,7 @@ class TrabajoDialog:
         def _norm(s: object) -> str:
             return str(s or "").strip().upper()
 
-        if self._concepto_tiene_codigo_y_formato():
-            c = {"codigo": str(self.concepto["codigo"]), "formato": str(self.concepto["formato"])}
-            lista_campos = self._formatos_uc.obtener_atributos_por_concepto(c)
-        else:
-            lista_campos = self._formatos_uc.obtener_atributos_por_concepto(self.concepto)
+        lista_campos = self._obtener_atributos_concepto()
 
         # Catálogo de atributos permitidos en tarjeta (solo CLASE=0).
         clase_cero_por_norm: dict[str, str] = {}
@@ -1565,7 +1639,7 @@ class TrabajoDialog:
         Solo se usa cuando `abrir()` se invoca con modo='eliminar'.
         """
         self._btn_confirmar_dialogo = None
-        campos = self._formatos_uc.obtener_atributos_por_concepto(self.concepto)
+        campos = self._obtener_atributos_concepto()
         opt = [(a[0], a[1]) for a in campos if a[2] == 1]
         
         self.opcion = ft.RadioGroup(
