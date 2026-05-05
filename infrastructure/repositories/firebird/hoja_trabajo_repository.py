@@ -303,6 +303,67 @@ def _resolver_concepto_y_elemento_entrada(
     return int(row[0]), int(row[1])
 
 
+def _actualizar_valor_entrada_por_descripcion(
+    cur: Any,
+    *,
+    valor: Any,
+    id_concepto: int,
+    identidad: str,
+    codigo_concepto: str,
+    formato_concepto: str,
+    descripcion: str,
+) -> None:
+    """Actualiza `HOJA_TRABAJO.VALOR` resolviendo `IDATRIBUTO` por descripción y concepto."""
+    if formato_concepto:
+        cur.execute(
+            """
+            UPDATE HOJA_TRABAJO ht
+            SET ht.VALOR = ?
+            WHERE ht.IDCONCEPTO = ? AND TRIM(ht.IDENTIDADTERCERO) = TRIM(?)
+            AND ht.IDATRIBUTO = (
+                SELECT a.ID
+                FROM CONCEPTOS c
+                INNER JOIN FORMATOS f ON f.ID = c.IDFORMATO
+                JOIN ELEMENTOS e ON e.IDCONCEPTO = c.ID
+                JOIN ATRIBUTOS a ON a.IDELEMENTO = e.ID
+                WHERE c.CODIGO = ? AND f.FORMATO = ?
+                AND a.DESCRIPCION = ?
+            )
+            """,
+            (
+                valor or "",
+                id_concepto,
+                identidad,
+                codigo_concepto,
+                formato_concepto,
+                descripcion,
+            ),
+        )
+        return
+    cur.execute(
+        """
+        UPDATE HOJA_TRABAJO ht
+        SET ht.VALOR = ?
+        WHERE ht.IDCONCEPTO = ? AND TRIM(ht.IDENTIDADTERCERO) = TRIM(?)
+        AND ht.IDATRIBUTO = (
+            SELECT a.ID
+            FROM CONCEPTOS c
+            JOIN ELEMENTOS e ON e.IDCONCEPTO = c.ID
+            JOIN ATRIBUTOS a ON a.IDELEMENTO = e.ID
+            WHERE c.CODIGO = ?
+            AND a.DESCRIPCION = ?
+        )
+        """,
+        (
+            valor or "",
+            id_concepto,
+            identidad,
+            codigo_concepto,
+            descripcion,
+        ),
+    )
+
+
 class FirebirdHojaTrabajoRepository:
     """Implementación Firebird del puerto de hoja de trabajo."""
 
@@ -1169,54 +1230,15 @@ class FirebirdHojaTrabajoRepository:
 
                 for llave, valor in datos.items():
                     if llave not in ("FORMATO", "Concepto", "id_concepto"):
-                        if formato_concepto:
-                            cur.execute(
-                                """
-                                UPDATE HOJA_TRABAJO ht
-                                SET ht.VALOR = ?
-                                WHERE ht.IDCONCEPTO = ? AND TRIM(ht.IDENTIDADTERCERO) = TRIM(?)
-                                AND ht.IDATRIBUTO = (
-                                    SELECT a.ID
-                                    FROM CONCEPTOS c
-                                    INNER JOIN FORMATOS f ON f.ID = c.IDFORMATO
-                                    JOIN ELEMENTOS e ON e.IDCONCEPTO = c.ID
-                                    JOIN ATRIBUTOS a ON a.IDELEMENTO = e.ID
-                                    WHERE c.CODIGO = ? AND f.FORMATO = ?
-                                    AND a.DESCRIPCION = ?
-                                )
-                                """,
-                                (
-                                    valor or "",
-                                    id_concepto,
-                                    identidad,
-                                    codigo_concepto,
-                                    formato_concepto,
-                                    llave,
-                                ),
-                            )
-                        else:
-                            cur.execute(
-                                """
-                                UPDATE HOJA_TRABAJO ht
-                                SET ht.VALOR = ?
-                                WHERE ht.IDCONCEPTO = ? AND TRIM(ht.IDENTIDADTERCERO) = TRIM(?)
-                                AND ht.IDATRIBUTO = (
-                                    SELECT a.ID
-                                    FROM CONCEPTOS c
-                                    JOIN ELEMENTOS e ON e.IDCONCEPTO = c.ID
-                                    JOIN ATRIBUTOS a ON a.IDELEMENTO = e.ID
-                                    WHERE c.CODIGO = ?
-                                    AND a.DESCRIPCION = ?
-                                )
-                                """,
-                                (
-                                    valor or "",
-                                    id_concepto,
-                                    identidad,
-                                    codigo_concepto,
-                                    llave,
-                                ),
-                            )
+                        _actualizar_valor_entrada_por_descripcion(
+                            cur,
+                            valor=valor,
+                            id_concepto=id_concepto,
+                            identidad=identidad,
+                            codigo_concepto=str(codigo_concepto),
+                            formato_concepto=str(formato_concepto),
+                            descripcion=str(llave),
+                        )
             return True
         except Exception:
             return False
