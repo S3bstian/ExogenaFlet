@@ -920,17 +920,22 @@ class TrabajoDialog:
         Construye el diálogo principal de formulario.
         Se usa tanto en modo 'nuevo' como en modo 'editar'.
         """
+        self._preparar_estado_dialogo_formulario()
+        controles = self._construir_grid_campos()
+        contenido = self._construir_contenido_dialogo(controles)
+        self.dialog = self._crear_dialogo(contenido)
+        self._mostrar_dialogo_formulario()
+
+    def _preparar_estado_dialogo_formulario(self) -> None:
+        """Carga estado previo y metadatos necesarios antes de renderizar controles."""
         if self.modo == "editar":
             self.formato = self.datos.get("FORMATO", "")
-        
         self._cargar_atributos_info()
         self._asegurar_datos_completos()
         self._imprimir_atributos_en_consola()
-        controles = self._construir_grid_campos()
-        
-        contenido = self._construir_contenido_dialogo(controles)
-        self.dialog = self._crear_dialogo(contenido)
-        
+
+    def _mostrar_dialogo_formulario(self) -> None:
+        """Inicializa dependencias del diálogo y lo muestra en pantalla."""
         self._inicializar_dropdowns_dependientes()
         self.page.show_dialog(self.dialog)
         self.page.update()
@@ -980,208 +985,249 @@ class TrabajoDialog:
         2 cols (fideicomiso masivo): orden del concepto.
         3 cols (nuevo/editar): datos específicos (CLASE=2), manuales (CLASE=3), valores (CLASE=1).
         """
-        columnas = 3 if self.modo in ("nuevo", "editar") else 2
         margen_horizontal = 6
         padding_celda = 9
+        ancho_normal = self._ancho_normal_grid(controles)
 
+        if self.modo in ("nuevo", "editar"):
+            return self._filas_grid_tres_columnas(
+                controles=controles,
+                margen_horizontal=margen_horizontal,
+                padding_celda=padding_celda,
+                ancho_normal=ancho_normal,
+            )
+        return self._filas_grid_dos_columnas(
+            controles=controles,
+            margen_horizontal=margen_horizontal,
+            padding_celda=padding_celda,
+            ancho_normal=ancho_normal,
+        )
+
+    def _ancho_normal_grid(self, controles: list[tuple[str, ft.Control]]) -> int:
+        """Ancho base para celdas vacías y cálculo de filas completas."""
         ancho_normal = 233
-        for a, _ in controles:
-            if not self._es_attr_razon_social(a):
-                ancho_normal = self._ancho_control(a)
-                break
+        for attr, _ in controles:
+            if not self._es_attr_razon_social(attr):
+                return self._ancho_control(attr)
+        return ancho_normal
 
-        def wrap_cell(attr: str, ctrl: ft.Control) -> ft.Container:
-            return ft.Container(
-                width=self._ancho_control(attr),
-                padding=padding_celda,
-                expand=False,
-                content=ctrl,
-            )
+    def _wrap_cell_grid(self, attr: str, ctrl: ft.Control, padding_celda: int) -> ft.Container:
+        return ft.Container(
+            width=self._ancho_control(attr),
+            padding=padding_celda,
+            expand=False,
+            content=ctrl,
+        )
 
-        def empty_cell() -> ft.Container:
-            return ft.Container(
-                width=ancho_normal,
-                padding=padding_celda,
-                expand=False,
-            )
+    def _empty_cell_grid(self, ancho_normal: int, padding_celda: int) -> ft.Container:
+        return ft.Container(
+            width=ancho_normal,
+            padding=padding_celda,
+            expand=False,
+        )
 
-        def fila_razon_social(ancho_fila: int, ctrl: ft.Control) -> ft.Row:
-            return ft.Row(
-                [
-                    ft.Container(
-                        width=ancho_fila,
-                        padding=padding_celda,
-                        expand=False,
-                        content=ctrl,
-                    )
-                ],
-                spacing=0,
-            )
+    def _fila_razon_social_grid(
+        self, ancho_fila: int, ctrl: ft.Control, padding_celda: int
+    ) -> ft.Row:
+        return ft.Row(
+            [
+                ft.Container(
+                    width=ancho_fila,
+                    padding=padding_celda,
+                    expand=False,
+                    content=ctrl,
+                )
+            ],
+            spacing=0,
+        )
 
-        # --- 2 columnas: emparejado secuencial (misma lógica que antes del refactor) ---
-        if columnas == 2:
-            filas: list[ft.Row] = []
-            pendiente: tuple[str, ft.Control] | None = None
-            for attr, ctrl in controles:
-                if self._es_attr_razon_social(attr):
-                    if pendiente is not None:
-                        a1, c1 = pendiente
-                        filas.append(
-                            ft.Row([wrap_cell(a1, c1), empty_cell()], spacing=margen_horizontal)
-                        )
-                        pendiente = None
-                    filas.append(fila_razon_social(self._ancho_control(attr), ctrl))
-                    continue
-                if pendiente is None:
-                    pendiente = (attr, ctrl)
-                else:
+    def _filas_grid_dos_columnas(
+        self,
+        *,
+        controles: list[tuple[str, ft.Control]],
+        margen_horizontal: int,
+        padding_celda: int,
+        ancho_normal: int,
+    ) -> list[ft.Row]:
+        """Emparejado secuencial de dos columnas (mismo comportamiento histórico)."""
+        filas: list[ft.Row] = []
+        pendiente: tuple[str, ft.Control] | None = None
+        for attr, ctrl in controles:
+            if self._es_attr_razon_social(attr):
+                if pendiente is not None:
                     a1, c1 = pendiente
                     filas.append(
-                        ft.Row([wrap_cell(a1, c1), wrap_cell(attr, ctrl)], spacing=margen_horizontal)
+                        ft.Row(
+                            [
+                                self._wrap_cell_grid(a1, c1, padding_celda),
+                                self._empty_cell_grid(ancho_normal, padding_celda),
+                            ],
+                            spacing=margen_horizontal,
+                        )
                     )
                     pendiente = None
-            if pendiente is not None:
+                filas.append(
+                    self._fila_razon_social_grid(
+                        self._ancho_control(attr), ctrl, padding_celda
+                    )
+                )
+                continue
+            if pendiente is None:
+                pendiente = (attr, ctrl)
+            else:
                 a1, c1 = pendiente
-                filas.append(ft.Row([wrap_cell(a1, c1), empty_cell()], spacing=margen_horizontal))
-            return filas
+                filas.append(
+                    ft.Row(
+                        [
+                            self._wrap_cell_grid(a1, c1, padding_celda),
+                            self._wrap_cell_grid(attr, ctrl, padding_celda),
+                        ],
+                        spacing=margen_horizontal,
+                    )
+                )
+                pendiente = None
+        if pendiente is not None:
+            a1, c1 = pendiente
+            filas.append(
+                ft.Row(
+                    [
+                        self._wrap_cell_grid(a1, c1, padding_celda),
+                        self._empty_cell_grid(ancho_normal, padding_celda),
+                    ],
+                    spacing=margen_horizontal,
+                )
+            )
+        return filas
 
-        # --- 3 columnas: orden por clasificación + bloques visuales ---
+    def _fila_titulo_bloque_grid(self, texto: str, ancho_fila_completa: int, padding_celda: int) -> ft.Row:
+        return ft.Row(
+            [
+                ft.Container(
+                    width=ancho_fila_completa,
+                    padding=ft.padding.only(left=padding_celda, right=padding_celda, top=8, bottom=4),
+                    content=ft.Column(
+                        [
+                            ft.Text(texto, size=12, weight=ft.FontWeight.W_600, color=GREY_700, margin=ft.margin.only(top=-12)),
+                            ft.Divider(height=0, thickness=1, color=ft.Colors.GREY_300),
+                        ],
+                        spacing=0,
+                    ),
+                )
+            ],
+            spacing=0,
+        )
+
+    def _volcar_buffer_tres_columnas(
+        self,
+        *,
+        filas3: list[ft.Row],
+        buffer_controles: list[tuple[str, ft.Control]],
+        margen_horizontal: int,
+        padding_celda: int,
+        ancho_fila_completa: int,
+        ancho_normal: int,
+    ) -> None:
+        for j in range(0, len(buffer_controles), 3):
+            chunk = buffer_controles[j : j + 3]
+            if len(chunk) < 3 and all(isinstance(c, DropdownCompact) for _, c in chunk):
+                cells_expand: list[ft.Container] = []
+                for _, ctrl in chunk:
+                    if ctrl.controls and isinstance(ctrl.controls[0], ft.Container):
+                        ctrl.controls[0].width = None
+                        ctrl.controls[0].expand = 1
+                    ctrl.expand = 1
+                    cells_expand.append(
+                        ft.Container(padding=padding_celda, expand=1, content=ctrl)
+                    )
+                filas3.append(
+                    ft.Row(
+                        cells_expand,
+                        spacing=margen_horizontal,
+                        width=ancho_fila_completa,
+                    )
+                )
+                continue
+            celdas = [self._wrap_cell_grid(a, c, padding_celda) for a, c in chunk]
+            while len(celdas) < 3:
+                celdas.append(self._empty_cell_grid(ancho_normal, padding_celda))
+            filas3.append(ft.Row(celdas[:3], spacing=margen_horizontal))
+
+    def _filas_grid_tres_columnas(
+        self,
+        *,
+        controles: list[tuple[str, ft.Control]],
+        margen_horizontal: int,
+        padding_celda: int,
+        ancho_normal: int,
+    ) -> list[ft.Row]:
+        """Construye grid por secciones para nuevo/editar (3 columnas)."""
         especificos = [(a, c) for a, c in controles if self._es_clase_atributo(a, 2)]
         manuales = [(a, c) for a, c in controles if self._es_clase_atributo(a, 3)]
         valores = [(a, c) for a, c in controles if self._es_clase_atributo(a, 1)]
         ancho_fila_completa = 3 * (ancho_normal + 2 * padding_celda) + 2 * margen_horizontal
         filas3: list[ft.Row] = []
 
-        def volcar_buffer(buf: list[tuple[str, ft.Control]], n: int):
-            for j in range(0, len(buf), n):
-                chunk = buf[j : j + n]
-                if n == 3 and len(chunk) < 3 and all(isinstance(c, DropdownCompact) for _, c in chunk):
-                    cells_expand: list[ft.Container] = []
-                    for _, ctrl in chunk:
-                        if ctrl.controls and isinstance(ctrl.controls[0], ft.Container):
-                            ctrl.controls[0].width = None
-                            ctrl.controls[0].expand = 1
-                        ctrl.expand = 1
-                        cells_expand.append(
-                            ft.Container(padding=padding_celda, expand=1, content=ctrl)
-                        )
-                    filas3.append(
-                        ft.Row(
-                            cells_expand,
-                            spacing=margen_horizontal,
-                            width=ancho_fila_completa,
-                        )
-                    )
-                    continue
-                cells = [wrap_cell(a, c) for a, c in chunk]
-                while len(cells) < n:
-                    cells.append(empty_cell())
-                filas3.append(ft.Row(cells[:n], spacing=margen_horizontal))
-
-        def fila_titulo_bloque(texto: str) -> ft.Row:
-            return ft.Row(
-                [
-                    ft.Container(
-                        width=ancho_fila_completa,
-                        padding=ft.padding.only(left=padding_celda, right=padding_celda, top=8, bottom=4),
-                        content=ft.Column(
-                            [
-                                ft.Text(texto, size=12, weight=ft.FontWeight.W_600, color=GREY_700, margin=ft.margin.only(top=-12)),
-                                ft.Divider(height=0, thickness=1, color=ft.Colors.GREY_300),
-                            ],
-                            spacing=0,
-                        ),
-                    )
-                ],
-                spacing=0,
-            )
-
         secciones = [
             ("Datos especificos (DIAN)", especificos),
             ("Atributos manuales", manuales),
             ("Atributos de valores", valores),
         ]
-
         for titulo, grupo in secciones:
             if not grupo:
                 continue
             if filas3:
                 filas3.append(ft.Row([ft.Container(height=1)], spacing=0))
-            filas3.append(fila_titulo_bloque(titulo))
-            buf: list[tuple[str, ft.Control]] = []
-            for a, c in grupo:
-                if self._es_attr_razon_social(a):
-                    if buf:
-                        volcar_buffer(buf, 3)
-                        buf = []
-                    filas3.append(fila_razon_social(ancho_fila_completa, c))
+            filas3.append(
+                self._fila_titulo_bloque_grid(titulo, ancho_fila_completa, padding_celda)
+            )
+
+            buffer_controles: list[tuple[str, ft.Control]] = []
+            for attr, ctrl in grupo:
+                if self._es_attr_razon_social(attr):
+                    if buffer_controles:
+                        self._volcar_buffer_tres_columnas(
+                            filas3=filas3,
+                            buffer_controles=buffer_controles,
+                            margen_horizontal=margen_horizontal,
+                            padding_celda=padding_celda,
+                            ancho_fila_completa=ancho_fila_completa,
+                            ancho_normal=ancho_normal,
+                        )
+                        buffer_controles = []
+                    filas3.append(
+                        self._fila_razon_social_grid(
+                            ancho_fila_completa, ctrl, padding_celda
+                        )
+                    )
                 else:
-                    buf.append((a, c))
-                    if len(buf) == 3:
-                        volcar_buffer(buf, 3)
-                        buf = []
-            if buf:
-                volcar_buffer(buf, 3)
+                    buffer_controles.append((attr, ctrl))
+                    if len(buffer_controles) == 3:
+                        self._volcar_buffer_tres_columnas(
+                            filas3=filas3,
+                            buffer_controles=buffer_controles,
+                            margen_horizontal=margen_horizontal,
+                            padding_celda=padding_celda,
+                            ancho_fila_completa=ancho_fila_completa,
+                            ancho_normal=ancho_normal,
+                        )
+                        buffer_controles = []
+            if buffer_controles:
+                self._volcar_buffer_tres_columnas(
+                    filas3=filas3,
+                    buffer_controles=buffer_controles,
+                    margen_horizontal=margen_horizontal,
+                    padding_celda=padding_celda,
+                    ancho_fila_completa=ancho_fila_completa,
+                    ancho_normal=ancho_normal,
+                )
 
         return filas3
 
     def _construir_contenido_dialogo(self, controles):
         """Arma mensaje, piezas opcionales (fideicomiso, tercero) y grid según `self.modo`."""
         filas = self._construir_filas_grid_formulario(controles)
-
         grid = ft.Column(filas, spacing=0)
-        
-        contenido_columna = [self.mensaje]
-        if self.modo == "fideicomiso_masivo":
-            contenido_columna.append(self.loader_fideicomiso)
-            contenido_columna.append(self._construir_filtros_fideicomiso())
-        if self._debe_mostrar_selector_tercero() or self._debe_mostrar_boton_editar_tercero():
-            contenido_columna.append(self.loader_apertura_tercero)
-        
-        if self._debe_mostrar_selector_tercero():
-            self._btn_selector_tercero = ft.Button(
-                content="Seleccionar tercero",
-                icon=ft.Icons.PERSON_SEARCH,
-                style=BOTON_SECUNDARIO,
-                on_click=lambda e: self._abrir_dialogo_hijo_con_carga(
-                    self._btn_selector_tercero,
-                    self._abrir_dialogo_terceros,
-                    "Abriendo selector de terceros...",
-                ),
-            )
-            contenido_columna.append(
-                ft.Row([
-                    self._btn_selector_tercero
-                ], alignment=ft.MainAxisAlignment.CENTER)
-            )
-        
-        if self._debe_mostrar_tarjeta_tercero():
-            tarjeta = self._crear_tarjeta_tercero()
-            contenido_columna.append(tarjeta)
-            if self._debe_mostrar_boton_editar_tercero():
-                self._btn_editar_tercero = ft.ElevatedButton(
-                    "Editar tercero",
-                    icon=ft.Icons.EDIT,
-                    style=BOTON_SECUNDARIO,
-                    on_click=lambda e: self._abrir_dialogo_hijo_con_carga(
-                        self._btn_editar_tercero,
-                        self._abrir_dialogo_editar_tercero,
-                        "Abriendo editor de tercero...",
-                    ),
-                )
-                contenido_columna.append(
-                    ft.Row(
-                        [
-                            self._btn_editar_tercero
-                        ],
-                        alignment=ft.MainAxisAlignment.CENTER,
-                    )
-                )
-        if self.modo in ("nuevo", "editar") and not self._debe_mostrar_tarjeta_tercero():
-            tarjeta_contexto = self._crear_tarjeta_contexto_operativo()
-            if tarjeta_contexto:
-                contenido_columna.append(tarjeta_contexto)
-        
+        contenido_columna = self._bloques_superiores_dialogo()
         contenido_columna.append(
             ft.Row(
                 [grid],
@@ -1198,6 +1244,62 @@ class TrabajoDialog:
             content=ft.Column([content_column], expand=True, scroll=ft.ScrollMode.AUTO),
             padding=0,
         )
+
+    def _boton_selector_tercero(self) -> ft.Row:
+        """Botón central para abrir selector de terceros en modo nuevo."""
+        self._btn_selector_tercero = ft.Button(
+            content="Seleccionar tercero",
+            icon=ft.Icons.PERSON_SEARCH,
+            style=BOTON_SECUNDARIO,
+            on_click=lambda e: self._abrir_dialogo_hijo_con_carga(
+                self._btn_selector_tercero,
+                self._abrir_dialogo_terceros,
+                "Abriendo selector de terceros...",
+            ),
+        )
+        return ft.Row(
+            [self._btn_selector_tercero], alignment=ft.MainAxisAlignment.CENTER
+        )
+
+    def _boton_editar_tercero(self) -> ft.Row:
+        """Botón central para abrir edición del tercero actual."""
+        self._btn_editar_tercero = ft.ElevatedButton(
+            "Editar tercero",
+            icon=ft.Icons.EDIT,
+            style=BOTON_SECUNDARIO,
+            on_click=lambda e: self._abrir_dialogo_hijo_con_carga(
+                self._btn_editar_tercero,
+                self._abrir_dialogo_editar_tercero,
+                "Abriendo editor de tercero...",
+            ),
+        )
+        return ft.Row(
+            [self._btn_editar_tercero], alignment=ft.MainAxisAlignment.CENTER
+        )
+
+    def _bloques_superiores_dialogo(self) -> list:
+        """Bloques superiores del diálogo antes del grid (mensajes, loaders, tarjetas y botones)."""
+        bloques = [self.mensaje]
+        if self.modo == "fideicomiso_masivo":
+            bloques.append(self.loader_fideicomiso)
+            bloques.append(self._construir_filtros_fideicomiso())
+
+        if self._debe_mostrar_selector_tercero() or self._debe_mostrar_boton_editar_tercero():
+            bloques.append(self.loader_apertura_tercero)
+
+        if self._debe_mostrar_selector_tercero():
+            bloques.append(self._boton_selector_tercero())
+
+        if self._debe_mostrar_tarjeta_tercero():
+            bloques.append(self._crear_tarjeta_tercero())
+            if self._debe_mostrar_boton_editar_tercero():
+                bloques.append(self._boton_editar_tercero())
+
+        if self.modo in ("nuevo", "editar") and not self._debe_mostrar_tarjeta_tercero():
+            tarjeta_contexto = self._crear_tarjeta_contexto_operativo()
+            if tarjeta_contexto:
+                bloques.append(tarjeta_contexto)
+        return bloques
 
     def _construir_filtros_fideicomiso(self) -> ft.Container:
         """Dropdowns de filtro con valores ya existentes en hoja (sin duplicados)."""
