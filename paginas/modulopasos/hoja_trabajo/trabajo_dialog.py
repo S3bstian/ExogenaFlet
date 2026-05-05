@@ -1526,6 +1526,16 @@ class TrabajoDialog:
             return "—"
         return str(valor).strip()
 
+    def _fila_tarjeta_info(self, etiqueta: str, texto: str) -> ft.Row:
+        """Fila estándar label + valor para tarjetas de solo lectura (tercero, etc.)."""
+        return ft.Row(
+            [
+                ft.Text(f"{etiqueta}:", weight=ft.FontWeight.BOLD, width=130),
+                ft.Text(texto, expand=True),
+            ],
+            spacing=5,
+        )
+
     def _crear_tarjeta_tercero(self):
         """
         Tarjeta con datos del tercero seleccionado o cargado.
@@ -1534,16 +1544,8 @@ class TrabajoDialog:
         t = self.tercero_actual or {}
         campos: list[ft.Row] = []
 
-        def fila(label: str, texto: str):
-            campos.append(
-                ft.Row(
-                    [
-                        ft.Text(f"{label}:", weight=ft.FontWeight.BOLD, width=130),
-                        ft.Text(texto, expand=True),
-                    ],
-                    spacing=5,
-                )
-            )
+        def fila(label: str, texto: str) -> None:
+            campos.append(self._fila_tarjeta_info(label, texto))
 
         fila("Id", self._texto_resumen(t.get("id")))
         fila("Razón social", self._texto_resumen(t.get("razonsocial")))
