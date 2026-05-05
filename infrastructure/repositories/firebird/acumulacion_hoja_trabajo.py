@@ -273,6 +273,58 @@ def _resolver_valor_atributo(
             return 0
 
 
+def _tabla_por_tipocontabilidad(tipo_contabilidad: Any) -> str:
+    """Mapea tipo de contabilidad a sufijo de tabla dinámica."""
+    if tipo_contabilidad == 1:
+        return "_trib"
+    if tipo_contabilidad == 2:
+        return "_cont"
+    return ""
+
+
+def _agregar_rows_con_identidad(
+    datos: List[Tuple[Any, ...]],
+    idx_identidad: int,
+    setsdatos: List[Tuple[Any, ...]],
+    identidades_unicas_antes: set,
+) -> int:
+    """Acumula rows y registra identidades únicas detectadas; retorna cantidad añadida."""
+    setsdatos.extend(datos)
+    for row in datos:
+        identidad = _get_or_default(row, idx_identidad, "")
+        if identidad:
+            identidades_unicas_antes.add(identidad)
+    return len(datos)
+
+
+def _cargar_sets_tipo_b(cur: Any, setsdatos: List[Tuple[Any, ...]], identidades_unicas_antes: set) -> int:
+    """Carga sets para elemento tipo B y acumula identidades por fila."""
+    query = """SELECT 
+            Identidad, Nombre, Verificacion, Saldo 
+        FROM BANCOS_MOV
+    """
+    cur.execute(query)
+    datos = cur.fetchall()
+    return _agregar_rows_con_identidad(datos, 0, setsdatos, identidades_unicas_antes)
+
+
+def _cargar_sets_tipo_a(
+    cur: Any,
+    tabla: str,
+    setsdatos: List[Tuple[Any, ...]],
+    identidades_unicas_antes: set,
+) -> int:
+    """Carga sets para elemento tipo A y acumula identidades por tercero."""
+    query = f"""SELECT 
+            Codigo, Nombre, Naturaleza, Tercero, SaldoInicial, Debitos, 
+            Creditos, SaldoFinal, ValorAbsoluto 
+        FROM cuentas{tabla}
+    """
+    cur.execute(query)
+    datos = cur.fetchall()
+    return _agregar_rows_con_identidad(datos, 3, setsdatos, identidades_unicas_antes)
+
+
 def acumular_conceptos_hoja_trabajo(
     conceptos: List[Dict[str, Any]],
     loader: Any,
@@ -460,12 +512,7 @@ def acumular_conceptos_hoja_trabajo(
                         _raise_if_cancel()
                         attr_count += 1
                         try:
-                            if attr[2] == 1:
-                                tabla = "_trib"
-                            elif attr[2] == 2:
-                                tabla = "_cont"
-                            else:
-                                tabla = ""
+                            tabla = _tabla_por_tipocontabilidad(attr[2])
 
                             # Validar tabla contra whitelist
                             if tabla not in TABLAS_MOVIMIENTOS_PERMITIDAS:
@@ -530,10 +577,12 @@ def acumular_conceptos_hoja_trabajo(
                                     advertencias_sin_datos_map[
                                         (str(concepto_codigo), str(concepto_formato))
                                     ].add(str(attr[4]).strip())
-                                total_registros_antes_unificar += len(datos)
-                                for row in datos:
-                                    identidades_unicas_antes.add(row[1])  # row[1] es identidad
-                                setsdatos.extend(datos)
+                                total_registros_antes_unificar += _agregar_rows_con_identidad(
+                                    datos,
+                                    1,
+                                    setsdatos,
+                                    identidades_unicas_antes,
+                                )
                             elif tipo_el == "C" and tabla != "":
                                 if not _codigo_cuenta_no_vacio(attr[4]):
                                     continue
@@ -564,29 +613,18 @@ def acumular_conceptos_hoja_trabajo(
                                 elif datos:
                                     setsdatos.append(datos)
                             elif tipo_el == "B":
-                                query = """SELECT 
-                                        Identidad, Nombre, Verificacion, Saldo 
-                                    FROM BANCOS_MOV
-                                """
-                                cur.execute(query)
-                                datos = cur.fetchall()
-                                total_registros_antes_unificar += len(datos)
-                                for row in datos:
-                                    identidades_unicas_antes.add(row[0])  # row[0] es Identidad
-                                setsdatos.extend(datos)
+                                total_registros_antes_unificar += _cargar_sets_tipo_b(
+                                    cur,
+                                    setsdatos,
+                                    identidades_unicas_antes,
+                                )
                             elif tipo_el == "A":
-                                query = f"""SELECT 
-                                        Codigo, Nombre, Naturaleza, Tercero, SaldoInicial, Debitos, 
-                                        Creditos, SaldoFinal, ValorAbsoluto 
-                                    FROM cuentas{tabla}
-                                """
-                                cur.execute(query)
-                                datos = cur.fetchall()
-                                total_registros_antes_unificar += len(datos)
-                                for row in datos:
-                                    if len(row) > 3:
-                                        identidades_unicas_antes.add(row[3])  # row[3] es Tercero
-                                setsdatos.extend(datos)
+                                total_registros_antes_unificar += _cargar_sets_tipo_a(
+                                    cur,
+                                    tabla,
+                                    setsdatos,
+                                    identidades_unicas_antes,
+                                )
                         except Exception as e:
                             print(f"[ERROR] Concepto {concepto_codigo}, Atributo {attr[0]}: {e}")
                             raise e
