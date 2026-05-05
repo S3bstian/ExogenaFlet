@@ -529,32 +529,25 @@ def _insertar_sets_concepto(
             if attr[0] in atributos_procesados:
                 continue
 
-            valor = _resolver_valor_atributo(
-                tipo_el=tipo_el,
-                attr=attr,
-                setdatos=setdatos,
-                concepto_codigo=concepto.get("codigo"),
-                set_idx=i,
-            )
-            idtercero = _obtener_idtercero_por_tipo(tipo_el, setdatos)
             atributos_procesados.add(attr[0])
-            id_limpio = str(idtercero).strip() if idtercero else ""
-
-            try:
-                insert_fila_hoja_trabajo(
-                    cur,
-                    concepto.get("id"),
-                    attr[0],
-                    elemento_id,
-                    valor,
-                    idtercero,
-                )
+            insertado, detalle_impreso = _insertar_atributo_en_set(
+                cur=cur,
+                attr=attr,
+                tipo_el=tipo_el,
+                setdatos=setdatos,
+                concepto=concepto,
+                elemento_id=elemento_id,
+                concepto_codigo=concepto_codigo,
+                set_idx=i,
+                mostrar_detalle_set=mostrar_detalle_set,
+                inserts_detallados=inserts_detallados,
+                log_max_inserts_detalle=log_max_inserts_detalle,
+                total_errores=total_errores,
+            )
+            if insertado:
                 insert_count += 1
-                if mostrar_detalle_set and inserts_detallados < log_max_inserts_detalle:
-                    _imprimir_detalle_insert(concepto_codigo, tipo_el, attr, valor, id_limpio)
-                    inserts_detallados += 1
-            except Exception as e:
-                _registrar_error_insert(total_errores, concepto_codigo, i, attr, id_limpio, e)
+            if detalle_impreso:
+                inserts_detallados += 1
 
         _checkpoint_progreso_insercion_sets(
             set_idx=i,
@@ -584,6 +577,51 @@ def _imprimir_detalle_insert(
         f"[ACUMULACIÓN]   Insert concepto={concepto_codigo} elem={tipo_el} "
         f"attr={attr[0]} \"{desc}\" valor={val_str} identidad={id_limpio or '-'}"
     )
+
+
+def _insertar_atributo_en_set(
+    cur: Any,
+    attr: Tuple[Any, ...],
+    tipo_el: str,
+    setdatos: Tuple[Any, ...],
+    concepto: Dict[str, Any],
+    elemento_id: Any,
+    concepto_codigo: Any,
+    set_idx: int,
+    mostrar_detalle_set: bool,
+    inserts_detallados: int,
+    log_max_inserts_detalle: int,
+    total_errores: List[Dict[str, Any]],
+) -> Tuple[bool, bool]:
+    """Resuelve e inserta un atributo de un set; retorna (insertado, detalle_impreso)."""
+    valor = _resolver_valor_atributo(
+        tipo_el=tipo_el,
+        attr=attr,
+        setdatos=setdatos,
+        concepto_codigo=concepto.get("codigo"),
+        set_idx=set_idx,
+    )
+    idtercero = _obtener_idtercero_por_tipo(tipo_el, setdatos)
+    id_limpio = str(idtercero).strip() if idtercero else ""
+
+    try:
+        insert_fila_hoja_trabajo(
+            cur,
+            concepto.get("id"),
+            attr[0],
+            elemento_id,
+            valor,
+            idtercero,
+        )
+    except Exception as e:
+        _registrar_error_insert(total_errores, concepto_codigo, set_idx, attr, id_limpio, e)
+        return False, False
+
+    detalle_impreso = False
+    if mostrar_detalle_set and inserts_detallados < log_max_inserts_detalle:
+        _imprimir_detalle_insert(concepto_codigo, tipo_el, attr, valor, id_limpio)
+        detalle_impreso = True
+    return True, detalle_impreso
 
 
 def _checkpoint_progreso_insercion_sets(
