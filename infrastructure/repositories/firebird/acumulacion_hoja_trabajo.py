@@ -439,6 +439,48 @@ def _insertar_sets_concepto(
     return insert_count
 
 
+def _obtener_elemento_concepto(cur: Any, concepto_id: Any) -> Optional[Tuple[Any, ...]]:
+    """Obtiene el elemento activo asociado al concepto."""
+    cur.execute(
+        """
+            SELECT id, tipoacumuladog
+            FROM ELEMENTOS
+            WHERE idconcepto = ? AND TIPOACUMULADOG <> 'NULL'
+        """,
+        (concepto_id,),
+    )
+    return cur.fetchone()
+
+
+def _obtener_atributos_elemento(cur: Any, elemento_id: Any) -> List[Tuple[Any, ...]]:
+    """Obtiene atributos configurados para el elemento, con cuenta asociada cuando existe."""
+    cur.execute(
+        """
+            SELECT
+                a.id, 
+                a.tipoacumulado, 
+                a.tipocontabilidad, 
+                a.descripcion, 
+                CASE 
+                    WHEN a.tipocontabilidad = 1 THEN ct.codigo
+                    WHEN a.tipocontabilidad = 2 THEN cc.codigo
+                    ELSE NULL
+                END AS codigo,
+                a.clase
+            FROM ATRIBUTOS a
+            LEFT JOIN CUENTAS_ATRIBUTOS r ON r.idatributo = a.id
+            LEFT JOIN CUENTAS_TRIB ct
+                ON (a.tipocontabilidad = 1 AND ct.id = r.idcuenta)
+            LEFT JOIN CUENTAS_CONT cc
+                ON (a.tipocontabilidad = 2 AND cc.id = r.idcuenta)
+            WHERE a.idelemento = ?
+            ORDER BY a.id
+        """,
+        (elemento_id,),
+    )
+    return cur.fetchall()
+
+
 def acumular_conceptos_hoja_trabajo(
     conceptos: List[Dict[str, Any]],
     loader: Any,
@@ -555,12 +597,7 @@ def acumular_conceptos_hoja_trabajo(
 
                     # -------------------- PASO 1: elemento --------------------
                     try:
-                        cur.execute("""
-                            SELECT id, tipoacumuladog
-                            FROM ELEMENTOS
-                            WHERE idconcepto = ? AND TIPOACUMULADOG <> 'NULL'
-                        """, (concepto.get("id"),))
-                        elemento = cur.fetchone()
+                        elemento = _obtener_elemento_concepto(cur, concepto.get("id"))
                         if not elemento:
                             print(f"[WARNING] Concepto {concepto_codigo} omitido: no tiene elemento válido")
                             conceptos_omitidos_sin_elemento.append(str(concepto_codigo))
@@ -580,28 +617,7 @@ def acumular_conceptos_hoja_trabajo(
 
                     # -------------------- PASO 2: atributos --------------------
                     try:
-                        cur.execute("""
-                            SELECT
-                                a.id, 
-                                a.tipoacumulado, 
-                                a.tipocontabilidad, 
-                                a.descripcion, 
-                                CASE 
-                                    WHEN a.tipocontabilidad = 1 THEN ct.codigo
-                                    WHEN a.tipocontabilidad = 2 THEN cc.codigo
-                                    ELSE NULL
-                                END AS codigo,
-                                a.clase
-                            FROM ATRIBUTOS a
-                            LEFT JOIN CUENTAS_ATRIBUTOS r ON r.idatributo = a.id
-                            LEFT JOIN CUENTAS_TRIB ct
-                                ON (a.tipocontabilidad = 1 AND ct.id = r.idcuenta)
-                            LEFT JOIN CUENTAS_CONT cc
-                                ON (a.tipocontabilidad = 2 AND cc.id = r.idcuenta)
-                            WHERE a.idelemento = ?
-                            ORDER BY a.id
-                        """, (elemento[0],))
-                        atributos = cur.fetchall()
+                        atributos = _obtener_atributos_elemento(cur, elemento[0])
                     except Exception as e:
                         print(f"[ERROR] Obteniendo atributos para concepto {concepto_codigo}: {e}")
                         raise e
