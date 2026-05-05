@@ -671,6 +671,27 @@ def _construir_resultado_exito(
     )
 
 
+def _limpiar_hoja_por_conceptos_en_transaccion(
+    cur: Any,
+    conceptos: List[Dict[str, Any]],
+    total_conceptos: int,
+    raise_if_cancel: Any,
+    en_ui: Any,
+) -> None:
+    """Vacía HOJA_TRABAJO por concepto dentro de la misma transacción activa."""
+    for prep_idx, concepto_prep in enumerate(conceptos, start=1):
+        raise_if_cancel()
+        en_ui(
+            min(0.08, 0.01 + 0.07 * prep_idx / max(total_conceptos, 1)),
+            f"Preparando hoja {prep_idx} de {total_conceptos}",
+        )
+        id_prep = resolver_id_concepto_legacy(concepto_prep)
+        if id_prep is None:
+            print(f"Concepto no encontrado: {concepto_prep}")
+        else:
+            delete_hoja_trabajo_por_id_concepto_cursor(cur, id_prep)
+
+
 def acumular_conceptos_hoja_trabajo(
     conceptos: List[Dict[str, Any]],
     loader: Any,
@@ -762,17 +783,13 @@ def acumular_conceptos_hoja_trabajo(
 
                 # Vacía HOJA_TRABAJO por concepto en esta misma transacción; al cancelar o fallar,
                 # el rollback restaura también lo borrado aquí.
-                for prep_idx, concepto_prep in enumerate(conceptos, start=1):
-                    _raise_if_cancel()
-                    en_ui(
-                        min(0.08, 0.01 + 0.07 * prep_idx / max(total_conceptos, 1)),
-                        f"Preparando hoja {prep_idx} de {total_conceptos}",
-                    )
-                    id_prep = resolver_id_concepto_legacy(concepto_prep)
-                    if id_prep is None:
-                        print(f"Concepto no encontrado: {concepto_prep}")
-                    else:
-                        delete_hoja_trabajo_por_id_concepto_cursor(cur, id_prep)
+                _limpiar_hoja_por_conceptos_en_transaccion(
+                    cur=cur,
+                    conceptos=conceptos,
+                    total_conceptos=total_conceptos,
+                    raise_if_cancel=_raise_if_cancel,
+                    en_ui=en_ui,
+                )
 
                 # --------------------------- LOOP PRINCIPAL ---------------------------
                 for concepto in conceptos:
@@ -782,7 +799,6 @@ def acumular_conceptos_hoja_trabajo(
 
                     setsdatos.clear()
                     concepto_codigo = concepto.get("codigo", "N/A")
-                    concepto_id = concepto.get("id", "N/A")
                     concepto_formato = concepto.get("formato", "N/A")
 
                     # -------------------- PASO 1: elemento --------------------
