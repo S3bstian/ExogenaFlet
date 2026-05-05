@@ -1956,6 +1956,17 @@ class TrabajoDialog:
             self.page.update()
         self.tercero_dialog_editar.abrir(tercero=tercero, origen="editar")
 
+    def _valor_desde_control_grid(self, attr: str, ctrl) -> object:
+        """Interpreta `value` del control del grid según etiqueta/key o atributo monetario."""
+        val = getattr(ctrl, "value", None)
+        if not val:
+            return ""
+        if self._control_usa_key_from_label(ctrl):
+            return self._key_from_label(val)
+        if self._es_atributo_valor(attr):
+            return self._normalizar_valor_monetario(val)
+        return val
+
     def _valores_desde_controles_solo_grid(self) -> dict:
         """Lee solo atributos que tienen control en el grid (excluye tercero)."""
         datos: dict = {}
@@ -1963,25 +1974,17 @@ class TrabajoDialog:
             tipoacumulado = self.atributos_info.get(attr, 0)
             if self._es_campo_de_tercero(tipoacumulado, attr):
                 continue
-            val = getattr(ctrl, "value", None)
-            if not val:
-                datos[attr] = ""
-                continue
-            if self._control_usa_key_from_label(ctrl):
-                datos[attr] = self._key_from_label(val)
-            else:
-                datos[attr] = (
-                    self._normalizar_valor_monetario(val)
-                    if self._es_atributo_valor(attr)
-                    else val
-                )
-                
+            datos[attr] = self._valor_desde_control_grid(attr, ctrl)
         return datos
+
+    def _fusionar_campos_tercero_desde_datos(self, datos: dict) -> None:
+        """Añade a `datos` los valores de tercero que viven en `self.datos` (no están en el grid)."""
+        for attr, tipoacumulado in self.atributos_info.items():
+            if self._es_campo_de_tercero(tipoacumulado, attr):
+                datos[attr] = str(self.datos.get(attr, "") or "")
 
     def _recopilar_datos_formulario(self):
         """Recopila grid + valores de tercero almacenados en self.datos (tarjeta / selección)."""
         datos = self._valores_desde_controles_solo_grid()
-        for attr, tipoacumulado in self.atributos_info.items():
-            if self._es_campo_de_tercero(tipoacumulado, attr):
-                datos[attr] = str(self.datos.get(attr, "") or "")
+        self._fusionar_campos_tercero_desde_datos(datos)
         return datos

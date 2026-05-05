@@ -1,5 +1,6 @@
 import flet as ft
 import flet_datatable2 as fdt  # type: ignore[import-untyped]
+from typing import Callable
 from ui.colors import PINK_50, PINK_200, PINK_600, PINK_800, GREY_700, WHITE
 from ui.buttons import BOTON_PRINCIPAL, BOTON_SECUNDARIO, BOTON_SECUNDARIO_SIN
 from ui.dropdowns import DropdownCompact
@@ -760,20 +761,23 @@ class HojaTrabajoPage(ft.Column):
             btn(
                 "Insertar",
                 ft.Icons.ADD,
-                lambda e: self._abrir_dialogo_trabajo_deferred(
-                    "Preparando nuevo registro...",
-                    modo="nuevo",
-                    concepto=self._concepto_payload(),
-                )
-                if self.concepto_actual is not None
-                else self.mostrar_mensaje("Seleccione un concepto"),
+                lambda e: self._ejecutar_si_hay_concepto(
+                    lambda: self._abrir_dialogo_trabajo_deferred(
+                        "Preparando nuevo registro...",
+                        modo="nuevo",
+                        concepto=self._concepto_payload(),
+                    )
+                ),
             ),
             btn(
                 "Eliminar",
                 ft.Icons.DELETE_SHARP,
-                lambda e: self.dialog_trabajo.abrir(modo="eliminar", concepto=self._concepto_payload())
-                if self.concepto_actual is not None
-                else self.mostrar_mensaje("Seleccione un concepto"),
+                lambda e: self._ejecutar_si_hay_concepto(
+                    lambda: self.dialog_trabajo.abrir(
+                        modo="eliminar",
+                        concepto=self._concepto_payload(),
+                    )
+                ),
             ),
             btn("Actualizar hoja", ft.Icons.CLOUD_SYNC_OUTLINED, lambda e: self.cargar_datos()),
             menu(
@@ -818,12 +822,12 @@ class HojaTrabajoPage(ft.Column):
                             btn(
                                 "Tipo de fideicomiso",
                                 ft.Icons.ACCOUNT_BALANCE,
-                                lambda e: self.dialog_trabajo.abrir(
-                                    modo="fideicomiso_masivo",
-                                    concepto=self._concepto_payload(),
-                                )
-                                if self.concepto_actual is not None
-                                else self.mostrar_mensaje("Seleccione un concepto"),
+                                lambda e: self._ejecutar_si_hay_concepto(
+                                    lambda: self.dialog_trabajo.abrir(
+                                        modo="fideicomiso_masivo",
+                                        concepto=self._concepto_payload(),
+                                    )
+                                ),
                             )
                         )
             except Exception as e:
@@ -956,6 +960,13 @@ class HojaTrabajoPage(ft.Column):
         self.panel_herramientas.update()
 
     # --- Utilidades internas: herramientas (loader, snackbars, hilo) ---
+    def _ejecutar_si_hay_concepto(self, accion: Callable[[], None], mensaje_sin_concepto: str | None = None) -> None:
+        """Ejecuta `accion` solo con concepto elegido; evita repetir aviso en botones del toolbar."""
+        if self.concepto_actual is None:
+            self.mostrar_mensaje(mensaje_sin_concepto or "Seleccione un concepto")
+            return
+        accion()
+
     def _requiere_concepto(self) -> bool:
         """True si hay concepto seleccionado; si no, muestra aviso y retorna False."""
         if self.concepto_actual:
