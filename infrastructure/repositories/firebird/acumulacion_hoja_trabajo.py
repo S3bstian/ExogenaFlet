@@ -938,7 +938,6 @@ def _procesar_concepto_acumulacion(
 
     identidades_unificadas_count = 0
     if tipo_el in ("T", "B", "A") and setsdatos:
-        _duplicados = total_registros_antes_unificar - len(identidades_unicas_antes)
         setsdatos, identidades_unificadas = _unificar_setsdatos_por_tipo(tipo_el, setsdatos)
         identidades_unificadas_count = len(identidades_unificadas)
 
@@ -1042,7 +1041,6 @@ def acumular_conceptos_hoja_trabajo(
     La función usa whitelist para nombres de tablas dinámicas para prevenir
     inyecciones SQL en queries que construyen nombres de tablas.
     """
-    LOG_MAX_ATRIBUTOS = 8
     LOG_MAX_INSERTS_DETALLE = 3
     LOG_MAX_SETS_DETALLE = 2
 
