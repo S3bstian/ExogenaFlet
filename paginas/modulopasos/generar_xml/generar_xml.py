@@ -495,21 +495,25 @@ class GenerarXmlPage(ft.Column):
             alignment=ft.Alignment(0, 0),
         )
 
+        self._ejecutar_validacion_async()
+        return loader_validar
+
+    def _ejecutar_validacion_async(self) -> None:
+        """Lanza validación XSD en segundo plano y refresca la vista al terminar."""
         def validar_worker():
             formato_codigo = self.selected_formato_nombre
             rows = self._generar_xml_uc.obtener_datos_identidad(formato_codigo)
             self._cache_datos_hoja = rows
-            res = self._generar_xml_uc.validar_formato_xsd(
+            resultado = self._generar_xml_uc.validar_formato_xsd(
                 formato_codigo,
                 atributos_xsd=self._cache_xsd["atributos"],
                 rows=rows,
             )
-            self._resultado_validacion = res
+            self._resultado_validacion = resultado
             self._refresh_body()
             self._page.update()
 
         self._page.run_thread(validar_worker)
-        return loader_validar
 
     def _construir_ui_validacion(self, resultado_validacion):
         if not resultado_validacion:
@@ -550,14 +554,19 @@ class GenerarXmlPage(ft.Column):
 
     def _totales_validacion(self, resultado_validacion):
         total_errores = sum(
-            len([data for data in concepto_data.get("registros", {}).values() if data.get("errores")])
+            self._contar_registros_por_llave(concepto_data.get("registros", {}), "errores")
             for concepto_data in resultado_validacion.values()
         )
         total_avisos = sum(
-            len([data for data in concepto_data.get("registros", {}).values() if data.get("avisos")])
+            self._contar_registros_por_llave(concepto_data.get("registros", {}), "avisos")
             for concepto_data in resultado_validacion.values()
         )
         return total_errores, total_avisos
+
+    @staticmethod
+    def _contar_registros_por_llave(registros: dict, llave: str) -> int:
+        """Cuenta registros que contienen una llave con datos (errores/avisos)."""
+        return sum(1 for data in registros.values() if data.get(llave))
 
     def _ordenar_conceptos_validacion(self, resultado_validacion: dict) -> list:
         """Ordena (código, datos) poniendo primero conceptos con más filas en error."""
@@ -745,44 +754,41 @@ class GenerarXmlPage(ft.Column):
         pagina = self._pagina_concepto_actual(concepto_codigo)
         if total_paginas <= 1:
             return None
+        btn_prev = self._crear_boton_paginacion_concepto(
+            icono=ft.Icons.CHEVRON_LEFT,
+            disabled=pagina <= 0,
+            on_click=lambda e, c=concepto_codigo, p=pagina: self._cambiar_pagina_concepto_validacion(c, p - 1, total_items),
+        )
+        btn_next = self._crear_boton_paginacion_concepto(
+            icono=ft.Icons.CHEVRON_RIGHT,
+            disabled=pagina >= total_paginas - 1,
+            on_click=lambda e, c=concepto_codigo, p=pagina: self._cambiar_pagina_concepto_validacion(c, p + 1, total_items),
+        )
         return ft.Row(
             [
-                ft.IconButton(
-                    icon=ft.Icons.CHEVRON_LEFT,
-                    icon_size=19,
-                    style=BOTON_SECUNDARIO_SIN,
-                    disabled=pagina <= 0,
-                    on_click=lambda e, c=concepto_codigo, p=pagina: self._cambiar_pagina_concepto_validacion(c, p - 1, total_items),
-                ),
+                btn_prev,
                 ft.Text(f"Página {pagina + 1} de {total_paginas}", size=12, color=GREY_700),
-                ft.IconButton(
-                    icon=ft.Icons.CHEVRON_RIGHT,
-                    icon_size=19,
-                    style=BOTON_SECUNDARIO_SIN,
-                    disabled=pagina >= total_paginas - 1,
-                    on_click=lambda e, c=concepto_codigo, p=pagina: self._cambiar_pagina_concepto_validacion(c, p + 1, total_items),
-                ),
+                btn_next,
             ],
             spacing=4,
             alignment=ft.MainAxisAlignment.END,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
+    @staticmethod
+    def _crear_boton_paginacion_concepto(icono, disabled: bool, on_click):
+        """Crea botones de navegación de páginas en resultados de validación."""
+        return ft.IconButton(
+            icon=icono,
+            icon_size=19,
+            style=BOTON_SECUNDARIO_SIN,
+            disabled=disabled,
+            on_click=on_click,
+        )
+
     def _bloque_concepto_validacion(self, concepto_codigo, concepto_data):
         registros_map = concepto_data.get("registros", {})
-        num_errores = 0
-        num_avisos = 0
-        total_afectados = 0
-        for r in registros_map.values():
-            tiene_err = bool(r.get("errores"))
-            tiene_avi = bool(r.get("avisos"))
-            if not (tiene_err or tiene_avi):
-                continue
-            total_afectados += 1
-            if tiene_err:
-                num_errores += 1
-            if tiene_avi:
-                num_avisos += 1
+        num_errores, num_avisos, total_afectados = self._resumen_concepto_validacion(registros_map)
 
         if total_afectados == 0:
             return ft.Container()
@@ -827,6 +833,24 @@ class GenerarXmlPage(ft.Column):
             bgcolor=ft.Colors.WHITE,
             content=ft.Column(hijos, spacing=6, tight=True),
         )
+
+    @staticmethod
+    def _resumen_concepto_validacion(registros_map: dict) -> tuple[int, int, int]:
+        """Calcula errores, avisos y total de registros afectados por concepto."""
+        num_errores = 0
+        num_avisos = 0
+        total_afectados = 0
+        for registro in registros_map.values():
+            tiene_err = bool(registro.get("errores"))
+            tiene_avi = bool(registro.get("avisos"))
+            if not (tiene_err or tiene_avi):
+                continue
+            total_afectados += 1
+            if tiene_err:
+                num_errores += 1
+            if tiene_avi:
+                num_avisos += 1
+        return num_errores, num_avisos, total_afectados
 
     def _exportar_validacion_pdf(self, resultado_validacion):
         """Genera el informe PDF de errores/avisos y abre el diálogo para guardarlo."""
