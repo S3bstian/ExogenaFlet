@@ -757,6 +757,109 @@ def _construir_sets_por_atributos(
     return total_registros_antes_unificar, identidades_unicas_antes
 
 
+def _procesar_concepto_acumulacion(
+    cur: Any,
+    concepto: Dict[str, Any],
+    concepto_actual: int,
+    total_conceptos: int,
+    setsdatos: List[Tuple[Any, ...]],
+    advertencias_sin_datos_map: Dict[Tuple[str, str], set],
+    total_errores: List[Dict[str, Any]],
+    log_max_sets_detalle: int,
+    log_max_inserts_detalle: int,
+    en_ui: Any,
+    raise_if_cancel: Any,
+) -> Dict[str, Any]:
+    """Ejecuta el flujo completo de un concepto y retorna métricas del resultado."""
+    raise_if_cancel()
+    en_ui(texto=f"Concepto {concepto_actual} de {total_conceptos}")
+
+    setsdatos.clear()
+    concepto_codigo = concepto.get("codigo", "N/A")
+    concepto_formato = concepto.get("formato", "N/A")
+
+    try:
+        elemento = _obtener_elemento_concepto(cur, concepto.get("id"))
+        if not elemento:
+            print(f"[WARNING] Concepto {concepto_codigo} omitido: no tiene elemento válido")
+            return {"omitido_sin_elemento": True, "concepto_codigo": str(concepto_codigo), "insert_count": 0, "identidades_unificadas": 0}
+        tipo_el = _normalizar_tipo_elemento(elemento[1])
+        print(
+            f"[ACUMULACIÓN] Concepto {concepto_codigo} | Formato {concepto_formato} "
+            f"| Elemento id={elemento[0]} tipo={tipo_el}"
+        )
+    except Exception as e:
+        print(f"[ERROR] Concepto {concepto_codigo}: {e}")
+        raise e
+
+    en_ui(0.11)
+    raise_if_cancel()
+    time.sleep(0.03)
+
+    try:
+        atributos = _obtener_atributos_elemento(cur, elemento[0])
+    except Exception as e:
+        print(f"[ERROR] Obteniendo atributos para concepto {concepto_codigo}: {e}")
+        raise e
+
+    print(f"[ACUMULACIÓN]   Atributos ({len(atributos)}): {atributos}")
+    en_ui(0.22)
+    raise_if_cancel()
+    time.sleep(0.03)
+
+    sin_cuentas_config = False
+    if tipo_el in ("T", "C") and not any(
+        attr[2] in (1, 2) and _codigo_cuenta_no_vacio(attr[4]) for attr in atributos
+    ):
+        sin_cuentas_config = True
+
+    total_registros_antes_unificar, identidades_unicas_antes = _construir_sets_por_atributos(
+        cur=cur,
+        atributos=atributos,
+        tipo_el=tipo_el,
+        concepto_codigo=concepto_codigo,
+        concepto_formato=concepto_formato,
+        setsdatos=setsdatos,
+        advertencias_sin_datos_map=advertencias_sin_datos_map,
+        raise_if_cancel=raise_if_cancel,
+    )
+
+    en_ui(0.33)
+    raise_if_cancel()
+    time.sleep(0.03)
+
+    identidades_unificadas_count = 0
+    if tipo_el in ("T", "B", "A") and setsdatos:
+        _duplicados = total_registros_antes_unificar - len(identidades_unicas_antes)
+        setsdatos, identidades_unificadas = _unificar_setsdatos_por_tipo(tipo_el, setsdatos)
+        identidades_unificadas_count = len(identidades_unificadas)
+
+    insert_count = _insertar_sets_concepto(
+        cur=cur,
+        setsdatos=setsdatos,
+        atributos=atributos,
+        tipo_el=tipo_el,
+        concepto=concepto,
+        elemento_id=elemento[0],
+        concepto_codigo=concepto_codigo,
+        concepto_actual=concepto_actual,
+        total_conceptos=total_conceptos,
+        log_max_sets_detalle=log_max_sets_detalle,
+        log_max_inserts_detalle=log_max_inserts_detalle,
+        total_errores=total_errores,
+        en_ui=en_ui,
+        raise_if_cancel=raise_if_cancel,
+    )
+
+    return {
+        "omitido_sin_elemento": False,
+        "concepto_codigo": str(concepto_codigo),
+        "insert_count": insert_count,
+        "identidades_unificadas": identidades_unificadas_count,
+        "sin_cuentas_config": sin_cuentas_config,
+    }
+
+
 def acumular_conceptos_hoja_trabajo(
     conceptos: List[Dict[str, Any]],
     loader: Any,
@@ -858,105 +961,33 @@ def acumular_conceptos_hoja_trabajo(
 
                 # --------------------------- LOOP PRINCIPAL ---------------------------
                 for concepto in conceptos:
-                    _raise_if_cancel()
                     concepto_actual += 1
-                    en_ui(texto=f"Concepto {concepto_actual} de {total_conceptos}")
-
-                    setsdatos.clear()
-                    concepto_codigo = concepto.get("codigo", "N/A")
-                    concepto_formato = concepto.get("formato", "N/A")
-
-                    # -------------------- PASO 1: elemento --------------------
-                    try:
-                        elemento = _obtener_elemento_concepto(cur, concepto.get("id"))
-                        if not elemento:
-                            print(f"[WARNING] Concepto {concepto_codigo} omitido: no tiene elemento válido")
-                            conceptos_omitidos_sin_elemento.append(str(concepto_codigo))
-                            continue
-                        tipo_el = _normalizar_tipo_elemento(elemento[1])
-                        print(
-                            f"[ACUMULACIÓN] Concepto {concepto_codigo} | Formato {concepto_formato} "
-                            f"| Elemento id={elemento[0]} tipo={tipo_el}"
-                        )
-                    except Exception as e:
-                        print(f"[ERROR] Concepto {concepto_codigo}: {e}")
-                        raise e
-
-                    en_ui(0.11)
-                    _raise_if_cancel()
-                    time.sleep(0.03)
-
-                    # -------------------- PASO 2: atributos --------------------
-                    try:
-                        atributos = _obtener_atributos_elemento(cur, elemento[0])
-                    except Exception as e:
-                        print(f"[ERROR] Obteniendo atributos para concepto {concepto_codigo}: {e}")
-                        raise e
-
-                    # Log: lista de atributos (resumida para no saturar)
-                    print(f"[ACUMULACIÓN]   Atributos ({len(atributos)}): {atributos}")
-                    en_ui(0.22)
-                    _raise_if_cancel()
-                    time.sleep(0.03)
-
-                    if tipo_el in ("T", "C") and not any(
-                        attr[2] in (1, 2) and _codigo_cuenta_no_vacio(attr[4]) for attr in atributos
-                    ):
-                        conceptos_sin_cuentas_en_config.append(str(concepto_codigo))
-
-                    # -------------------- PASO 3: sets de cuentas --------------------
-                    total_registros_antes_unificar, identidades_unicas_antes = _construir_sets_por_atributos(
+                    resultado_concepto = _procesar_concepto_acumulacion(
                         cur=cur,
-                        atributos=atributos,
-                        tipo_el=tipo_el,
-                        concepto_codigo=concepto_codigo,
-                        concepto_formato=concepto_formato,
-                        setsdatos=setsdatos,
-                        advertencias_sin_datos_map=advertencias_sin_datos_map,
-                        raise_if_cancel=_raise_if_cancel,
-                    )
-
-                    en_ui(0.33)
-                    _raise_if_cancel()
-                    time.sleep(0.03)
-
-                    # ==================== UNIFICACIÓN ====================
-                    _raise_if_cancel()
-                    identidades_unificadas = {}
-                    if tipo_el in ('T', 'B', 'A') and setsdatos:
-                        duplicados = total_registros_antes_unificar - len(identidades_unicas_antes)
-                        if duplicados > 0:
-                            # Solo mostrar si hay duplicados significativos
-                            pass  # Info silenciosa, solo se muestra en resumen si es relevante
-
-                    if tipo_el in ('T', 'B', 'A') and setsdatos:
-                        setsdatos, identidades_unificadas = _unificar_setsdatos_por_tipo(tipo_el, setsdatos)
-
-                        # Guardar info de unificación para resumen final
-                        if identidades_unificadas:
-                            identidades_unificadas_global += len(identidades_unificadas)
-
-                    # -------------------- PASO 4: insertar HOJA_TRABAJO --------------------
-                    insert_count = _insertar_sets_concepto(
-                        cur=cur,
-                        setsdatos=setsdatos,
-                        atributos=atributos,
-                        tipo_el=tipo_el,
                         concepto=concepto,
-                        elemento_id=elemento[0],
-                        concepto_codigo=concepto_codigo,
                         concepto_actual=concepto_actual,
                         total_conceptos=total_conceptos,
+                        setsdatos=setsdatos,
+                        advertencias_sin_datos_map=advertencias_sin_datos_map,
+                        total_errores=total_errores,
                         log_max_sets_detalle=LOG_MAX_SETS_DETALLE,
                         log_max_inserts_detalle=LOG_MAX_INSERTS_DETALLE,
-                        total_errores=total_errores,
                         en_ui=en_ui,
                         raise_if_cancel=_raise_if_cancel,
                     )
 
+                    if resultado_concepto["omitido_sin_elemento"]:
+                        conceptos_omitidos_sin_elemento.append(resultado_concepto["concepto_codigo"])
+                        continue
+
+                    if resultado_concepto["sin_cuentas_config"]:
+                        conceptos_sin_cuentas_en_config.append(resultado_concepto["concepto_codigo"])
+
+                    identidades_unificadas_global += resultado_concepto["identidades_unificadas"]
+                    insert_count = resultado_concepto["insert_count"]
                     total_inserts += insert_count
                     if insert_count == 0 and len(conceptos_sin_filas_en_hoja) < 40:
-                        conceptos_sin_filas_en_hoja.append(str(concepto_codigo))
+                        conceptos_sin_filas_en_hoja.append(resultado_concepto["concepto_codigo"])
 
                 # ==================== RESUMEN FINAL ====================
                 _imprimir_resumen_final_acumulacion(
