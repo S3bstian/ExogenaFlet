@@ -481,6 +481,64 @@ def _obtener_atributos_elemento(cur: Any, elemento_id: Any) -> List[Tuple[Any, .
     return cur.fetchall()
 
 
+def _imprimir_resumen_final_acumulacion(
+    total_conceptos: int,
+    total_inserts: int,
+    identidades_unificadas_global: int,
+    total_errores: List[Dict[str, Any]],
+) -> None:
+    """Imprime resumen global del proceso de acumulación."""
+    print(f"\n[ACUMULACIÓN] Completado: {total_conceptos} concepto(s), {total_inserts} insert(s)")
+    if identidades_unificadas_global > 0:
+        print(f"[ACUMULACIÓN] {identidades_unificadas_global} identidad(es) unificada(s)")
+    if total_errores:
+        print(f"[WARNING] {len(total_errores)} error(es) durante la inserción")
+        for err in total_errores[:5]:
+            print(f"  - {err['concepto']}, Atributo {err['atributo_id']}: {err['error'][:60]}")
+        if len(total_errores) > 5:
+            print(f"  ... y {len(total_errores) - 5} error(es) más")
+
+
+def _construir_resultado_exito(
+    conceptos: List[Dict[str, Any]],
+    total_inserts: int,
+    total_errores: List[Dict[str, Any]],
+    conceptos_omitidos_sin_elemento: List[str],
+    conceptos_sin_cuentas_en_config: List[str],
+    conceptos_sin_filas_en_hoja: List[str],
+    advertencias_sin_datos_map: Dict[Tuple[str, str], set],
+) -> ResultadoAcumulacion:
+    """Construye DTO de salida para ejecución completa (éxito parcial o total)."""
+    advertencias = sorted(
+        (
+            AdvertenciaAcumulacionSinDatos(
+                concepto_codigo=cod,
+                formato=fmt,
+                cuentas=sorted(cuentas),
+            )
+            for (cod, fmt), cuentas in advertencias_sin_datos_map.items()
+        ),
+        key=lambda a: (a.concepto_codigo, a.formato),
+    )
+    errores_ui = [
+        f"{e['concepto']} · atributo {e['atributo_id']} — {str(e['error'])[:80]}"
+        for e in total_errores[:20]
+    ]
+    if len(total_errores) > 20:
+        errores_ui.append(f"… y {len(total_errores) - 20} más (revisar consola).")
+
+    return ResultadoAcumulacion(
+        exito=not total_errores,
+        total_inserts=total_inserts,
+        total_conceptos_solicitados=len(conceptos),
+        conceptos_omitidos_sin_elemento=sorted(set(conceptos_omitidos_sin_elemento)),
+        conceptos_sin_cuentas_en_config=sorted(set(conceptos_sin_cuentas_en_config)),
+        conceptos_sin_filas_en_hoja=sorted(set(conceptos_sin_filas_en_hoja)),
+        advertencias_sin_datos=advertencias,
+        errores_insercion=errores_ui,
+    )
+
+
 def acumular_conceptos_hoja_trabajo(
     conceptos: List[Dict[str, Any]],
     loader: Any,
@@ -802,43 +860,20 @@ def acumular_conceptos_hoja_trabajo(
                         conceptos_sin_filas_en_hoja.append(str(concepto_codigo))
 
                 # ==================== RESUMEN FINAL ====================
-                print(f"\n[ACUMULACIÓN] Completado: {total_conceptos} concepto(s), {total_inserts} insert(s)")
-                if identidades_unificadas_global > 0:
-                    print(f"[ACUMULACIÓN] {identidades_unificadas_global} identidad(es) unificada(s)")
-                if total_errores:
-                    print(f"[WARNING] {len(total_errores)} error(es) durante la inserción")
-                    for err in total_errores[:5]:  # Mostrar solo primeros 5 errores
-                        print(f"  - {err['concepto']}, Atributo {err['atributo_id']}: {err['error'][:60]}")
-                    if len(total_errores) > 5:
-                        print(f"  ... y {len(total_errores) - 5} error(es) más")
-
-                advertencias = sorted(
-                    (
-                        AdvertenciaAcumulacionSinDatos(
-                            concepto_codigo=cod,
-                            formato=fmt,
-                            cuentas=sorted(cuentas),
-                        )
-                        for (cod, fmt), cuentas in advertencias_sin_datos_map.items()
-                    ),
-                    key=lambda a: (a.concepto_codigo, a.formato),
-                )
-                errores_ui = [
-                    f"{e['concepto']} · atributo {e['atributo_id']} — {str(e['error'])[:80]}"
-                    for e in total_errores[:20]
-                ]
-                if len(total_errores) > 20:
-                    errores_ui.append(f"… y {len(total_errores) - 20} más (revisar consola).")
-
-                return ResultadoAcumulacion(
-                    exito=not total_errores,
+                _imprimir_resumen_final_acumulacion(
+                    total_conceptos=total_conceptos,
                     total_inserts=total_inserts,
-                    total_conceptos_solicitados=len(conceptos),
-                    conceptos_omitidos_sin_elemento=sorted(set(conceptos_omitidos_sin_elemento)),
-                    conceptos_sin_cuentas_en_config=sorted(set(conceptos_sin_cuentas_en_config)),
-                    conceptos_sin_filas_en_hoja=sorted(set(conceptos_sin_filas_en_hoja)),
-                    advertencias_sin_datos=advertencias,
-                    errores_insercion=errores_ui,
+                    identidades_unificadas_global=identidades_unificadas_global,
+                    total_errores=total_errores,
+                )
+                return _construir_resultado_exito(
+                    conceptos=conceptos,
+                    total_inserts=total_inserts,
+                    total_errores=total_errores,
+                    conceptos_omitidos_sin_elemento=conceptos_omitidos_sin_elemento,
+                    conceptos_sin_cuentas_en_config=conceptos_sin_cuentas_en_config,
+                    conceptos_sin_filas_en_hoja=conceptos_sin_filas_en_hoja,
+                    advertencias_sin_datos_map=advertencias_sin_datos_map,
                 )
         except RuntimeError as e:
             if str(e) == _ACUMULAR_CANCEL_MSG:
