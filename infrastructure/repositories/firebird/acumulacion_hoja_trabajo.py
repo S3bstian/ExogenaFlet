@@ -520,13 +520,13 @@ def _insertar_sets_concepto(
 
     for i, setdatos in enumerate(setsdatos):
         raise_if_cancel()
-        contattr = []
+        atributos_procesados: set = set()
         mostrar_detalle_set = total_sets <= log_max_sets_detalle or i < log_max_sets_detalle
 
         for idx_attr, attr in enumerate(atributos):
             if idx_attr % 16 == 0:
                 raise_if_cancel()
-            if attr[0] in contattr:
+            if attr[0] in atributos_procesados:
                 continue
 
             valor = _resolver_valor_atributo(
@@ -537,7 +537,7 @@ def _insertar_sets_concepto(
                 set_idx=i,
             )
             idtercero = _obtener_idtercero_por_tipo(tipo_el, setdatos)
-            contattr.append(attr[0])
+            atributos_procesados.add(attr[0])
             id_limpio = str(idtercero).strip() if idtercero else ""
 
             try:
@@ -556,11 +556,14 @@ def _insertar_sets_concepto(
             except Exception as e:
                 _registrar_error_insert(total_errores, concepto_codigo, i, attr, id_limpio, e)
 
-        if (i + 1) % 25 == 0 or (i + 1) == total_sets:
-            if total_sets > 0:
-                en_ui(0.33 + 0.67 * (i + 1) / total_sets, f"Concepto {concepto_actual} de {total_conceptos}")
-            raise_if_cancel()
-            time.sleep(0.03)
+        _checkpoint_progreso_insercion_sets(
+            set_idx=i,
+            total_sets=total_sets,
+            concepto_actual=concepto_actual,
+            total_conceptos=total_conceptos,
+            en_ui=en_ui,
+            raise_if_cancel=raise_if_cancel,
+        )
 
     _imprimir_resumen_concepto(concepto_codigo, total_sets, insert_count, inserts_detallados)
     return insert_count
@@ -581,6 +584,23 @@ def _imprimir_detalle_insert(
         f"[ACUMULACIÓN]   Insert concepto={concepto_codigo} elem={tipo_el} "
         f"attr={attr[0]} \"{desc}\" valor={val_str} identidad={id_limpio or '-'}"
     )
+
+
+def _checkpoint_progreso_insercion_sets(
+    set_idx: int,
+    total_sets: int,
+    concepto_actual: int,
+    total_conceptos: int,
+    en_ui: Any,
+    raise_if_cancel: Any,
+) -> None:
+    """Actualiza progreso de inserción por lotes para no saturar la UI."""
+    if not ((set_idx + 1) % 25 == 0 or (set_idx + 1) == total_sets):
+        return
+    if total_sets > 0:
+        en_ui(0.33 + 0.67 * (set_idx + 1) / total_sets, f"Concepto {concepto_actual} de {total_conceptos}")
+    raise_if_cancel()
+    time.sleep(0.03)
 
 
 def _obtener_elemento_concepto(cur: Any, concepto_id: Any) -> Optional[Tuple[Any, ...]]:
