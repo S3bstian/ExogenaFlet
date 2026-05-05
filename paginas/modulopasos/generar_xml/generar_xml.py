@@ -921,25 +921,6 @@ class GenerarXmlPage(ft.Column):
         # 2. Validacion de fechas frente al periodo global
         #    Se asume entrada AAAA-MM-DD, que es el formato de fecha
         #    utilizado por los anexos de exgena mas recientes.
-        def parse_fecha_iso(texto):
-            partes = texto.split("-")
-            if len(partes) != 3 or any(not p.isdigit() for p in partes):
-                raise ValueError("La fecha debe estar en formato AAAA-MM-DD.")
-            ano = int(partes[0])
-            mes = int(partes[1])
-            dia = int(partes[2])
-            return ano, mes, dia
-
-        def helisa_desde_texto(nombre_campo):
-            valor = datos.get(nombre_campo, "")
-            if not valor:
-                raise ValueError(f"El campo '{nombre_campo}' es obligatorio.")
-            ano, mes, dia = parse_fecha_iso(valor)
-            try:
-                return fechaHelisa(ano, mes, dia)
-            except Exception as e:
-                raise ValueError(f"La fecha de '{nombre_campo}' no es valida: {e}")
-
         fecha_ini_periodo = FECHA_INICIAL
         fecha_fin_periodo = FECHA_FINAL
 
@@ -949,7 +930,7 @@ class GenerarXmlPage(ft.Column):
 
         # Fecha de envio
         try:
-            fecha_envio_helisa = helisa_desde_texto("fechaenvio")
+            fecha_envio_helisa = self._fecha_helisa_desde_texto(datos, "fechaenvio")
             if not (fecha_ini_periodo <= fecha_envio_helisa <= fecha_fin_periodo):
                 avisos.append(
                     "La fecha de envio esta fuera del rango del periodo configurado; "
@@ -960,7 +941,7 @@ class GenerarXmlPage(ft.Column):
 
         # Fecha inicial
         try:
-            fecha_ini_helisa = helisa_desde_texto("fechainicial")
+            fecha_ini_helisa = self._fecha_helisa_desde_texto(datos, "fechainicial")
             if fecha_ini_helisa < fecha_ini_periodo:
                 errores.append("La fecha inicial es anterior al inicio del periodo permitido.")
         except ValueError as ex:
@@ -968,7 +949,7 @@ class GenerarXmlPage(ft.Column):
 
         # Fecha final
         try:
-            fecha_fin_helisa = helisa_desde_texto("fechafinal")
+            fecha_fin_helisa = self._fecha_helisa_desde_texto(datos, "fechafinal")
             if fecha_fin_helisa > fecha_fin_periodo:
                 errores.append("La fecha final es posterior al final del periodo permitido.")
         except ValueError as ex:
@@ -980,21 +961,45 @@ class GenerarXmlPage(ft.Column):
                 errores.append("La fecha inicial no puede ser mayor que la fecha final.")
 
         # 3. Validacion basica de la hora de envio.
-        hora_txt = datos.get("horaenvio", "")
-        if not hora_txt:
-            errores.append("El campo 'Hora de envio' es obligatorio.")
-        else:
-            partes = hora_txt.split(":")
-            if len(partes) != 3 or any(not p.isdigit() for p in partes):
-                errores.append("La hora de envio debe estar en formato HH:MM:SS (por ejemplo, 09:30:00).")
-            else:
-                hh = int(partes[0])
-                mm = int(partes[1])
-                ss = int(partes[2])
-                if not (0 <= hh <= 23 and 0 <= mm <= 59 and 0 <= ss <= 59):
-                    errores.append("La hora de envio esta fuera del rango valido (00:00:00 a 23:59:59).")
+        error_hora = self._validar_hora_envio(datos.get("horaenvio", ""))
+        if error_hora:
+            errores.append(error_hora)
 
         return {"errores": errores, "avisos": avisos}
+
+    @staticmethod
+    def _parse_fecha_iso(texto: str) -> tuple[int, int, int]:
+        """Parsea fecha AAAA-MM-DD y retorna año, mes, día."""
+        partes = texto.split("-")
+        if len(partes) != 3 or any(not p.isdigit() for p in partes):
+            raise ValueError("La fecha debe estar en formato AAAA-MM-DD.")
+        return int(partes[0]), int(partes[1]), int(partes[2])
+
+    def _fecha_helisa_desde_texto(self, datos: dict, nombre_campo: str):
+        """Convierte un campo de fecha de cabecera al formato Helisa."""
+        valor = datos.get(nombre_campo, "")
+        if not valor:
+            raise ValueError(f"El campo '{nombre_campo}' es obligatorio.")
+        ano, mes, dia = self._parse_fecha_iso(valor)
+        try:
+            return fechaHelisa(ano, mes, dia)
+        except Exception as e:
+            raise ValueError(f"La fecha de '{nombre_campo}' no es valida: {e}")
+
+    @staticmethod
+    def _validar_hora_envio(hora_txt: str) -> str | None:
+        """Valida hora en formato HH:MM:SS y retorna mensaje de error o None."""
+        if not hora_txt:
+            return "El campo 'Hora de envio' es obligatorio."
+        partes = hora_txt.split(":")
+        if len(partes) != 3 or any(not p.isdigit() for p in partes):
+            return "La hora de envio debe estar en formato HH:MM:SS (por ejemplo, 09:30:00)."
+        hh = int(partes[0])
+        mm = int(partes[1])
+        ss = int(partes[2])
+        if not (0 <= hh <= 23 and 0 <= mm <= 59 and 0 <= ss <= 59):
+            return "La hora de envio esta fuera del rango valido (00:00:00 a 23:59:59)."
+        return None
 
     def _mostrar_mensaje(self, texto, duration):
         mostrar_mensaje_overlay(self._page, texto, duration, size=14)
