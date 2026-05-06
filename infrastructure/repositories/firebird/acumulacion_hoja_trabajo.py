@@ -819,20 +819,15 @@ def _construir_sets_por_atributos(
     raise_if_cancel: Any,
 ) -> Tuple[int, set]:
     """Construye sets de datos por atributo y retorna total previo + identidades únicas."""
-    attr_count = 0
     total_registros_antes_unificar = 0
     identidades_unicas_antes: set = set()
 
-    for attr in atributos:
+    for attr_count, attr in enumerate(atributos, start=1):
         raise_if_cancel()
-        attr_count += 1
+        tabla = _tabla_por_tipocontabilidad(attr[2])
+        if not _es_tabla_movimiento_permitida(tabla, attr_count):
+            continue
         try:
-            tabla = _tabla_por_tipocontabilidad(attr[2])
-
-            if tabla not in TABLAS_MOVIMIENTOS_PERMITIDAS:
-                print(f"    [WARNING] Atributo {attr_count}: Tabla no permitida '{tabla}', saltando...")
-                continue
-
             total_registros_antes_unificar += _cargar_sets_por_tipo_elemento(
                 cur=cur,
                 tipo_el=tipo_el,
@@ -844,11 +839,19 @@ def _construir_sets_por_atributos(
                 identidades_unicas_antes=identidades_unicas_antes,
                 advertencias_sin_datos_map=advertencias_sin_datos_map,
             )
-        except Exception as e:
-            print(f"[ERROR] Concepto {concepto_codigo}, Atributo {attr[0]}: {e}")
+        except Exception as error:
+            print(f"[ERROR] Concepto {concepto_codigo}, Atributo {attr[0]}: {error}")
             raise
 
     return total_registros_antes_unificar, identidades_unicas_antes
+
+
+def _es_tabla_movimiento_permitida(tabla: str, attr_count: int) -> bool:
+    """Valida whitelist de tablas dinámicas para queries de movimientos."""
+    if tabla in TABLAS_MOVIMIENTOS_PERMITIDAS:
+        return True
+    print(f"    [WARNING] Atributo {attr_count}: Tabla no permitida '{tabla}', saltando...")
+    return False
 
 
 def _cargar_sets_por_tipo_elemento(
