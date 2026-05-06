@@ -101,6 +101,7 @@ RUTAS: list[Tuple[str, RouteHandler]] = [
 
 
 def resolve_route(troute: ft.TemplateRoute) -> Optional[Tuple[str, RouteHandler]]:
+    """Resuelve la primera ruta registrada que haga match con la URL actual."""
     for ruta_registrada, manejador in RUTAS:
         if troute.match(ruta_registrada):
             return (ruta_registrada, manejador)
@@ -114,71 +115,96 @@ def parent_route_for_back(route: str) -> Optional[str]:
     return None
 
 
-def get_appbar_content(appbar_key: str, app: Any) -> Tuple[int, ft.Control]:
-    if appbar_key == APPBAR_LOGIN:
-        return (666, ft.Column(
-            [
-                ft.Row(
-                    controls=[
-                        app.logo_helisa,
-                        ft.Container(expand=True),
-                        app.backbutton,
-                        app.login_button,
-                    ],
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-            ],
-            alignment=ft.MainAxisAlignment.CENTER,
-        ))
-
-    return (
-        55,
-        ft.Stack(
-            expand=True,
-            height=130,
-            clip_behavior=ft.ClipBehavior.NONE,
-            controls=[
-                ft.Row(
-                    controls=[
-                        ft.Container(width=75),
-                        ft.Container(
-                            content=app._outer_banner_prefijo_appbar,
-                            expand=True,
-                            alignment=ft.Alignment.CENTER,
-                        ),
-                        app.backbutton,
-                        app.login_button,
-                    ],
-                    expand=True,
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                ft.Image(
-                    src=IMG_PATH + "/helisa.png",
-                    width=130,
-                    height=75,
-                    fit=ft.BoxFit.CONTAIN,
-                    left=0,
-                    top=(55 - 75) / 2
-                ),
-            ],
-        ),
+def _fila_appbar_login(app: Any) -> ft.Row:
+    """Fila superior del appbar en login/home con logo grande centrado."""
+    return ft.Row(
+        controls=[
+            app.logo_helisa,
+            ft.Container(expand=True),
+            app.backbutton,
+            app.login_button,
+        ],
+        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
 
 
+def _contenido_appbar_login(app: Any) -> ft.Control:
+    """Contenido completo del appbar para la pantalla de login."""
+    return ft.Column([_fila_appbar_login(app)], alignment=ft.MainAxisAlignment.CENTER)
+
+
+def _fila_appbar_home(app: Any) -> ft.Row:
+    """Fila superior del appbar compacto para rutas hijas de home."""
+    return ft.Row(
+        controls=[
+            ft.Container(width=75),
+            ft.Container(
+                content=app._outer_banner_prefijo_appbar,
+                expand=True,
+                alignment=ft.Alignment.CENTER,
+            ),
+            app.backbutton,
+            app.login_button,
+        ],
+        expand=True,
+        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
+
+
+def _logo_appbar_home() -> ft.Image:
+    """Logo anclado a la izquierda para appbar compacto."""
+    return ft.Image(
+        src=IMG_PATH + "/helisa.png",
+        width=130,
+        height=75,
+        fit=ft.BoxFit.CONTAIN,
+        left=0,
+        top=(55 - 75) / 2,
+    )
+
+
+def _contenido_appbar_home(app: Any) -> ft.Control:
+    """Contenido del appbar para rutas bajo /home."""
+    return ft.Stack(
+        expand=True,
+        height=130,
+        clip_behavior=ft.ClipBehavior.NONE,
+        controls=[_fila_appbar_home(app), _logo_appbar_home()],
+    )
+
+
+def get_appbar_content(appbar_key: str, app: Any) -> Tuple[int, ft.Control]:
+    """Devuelve alto y contenido del appbar según el tipo de ruta."""
+    if appbar_key == APPBAR_LOGIN:
+        return (666, _contenido_appbar_login(app))
+    return (55, _contenido_appbar_home(app))
+
+
+def _configurar_boton_login_en_login(app: Any) -> None:
+    """Configura botón principal para iniciar sesión."""
+    app.login_button.content = "Iniciar Sesión"
+    app.login_button.icon = None
+    app.login_button.style = BOTON_PRINCIPAL
+    app.login_button.on_click = app.login
+
+
+def _configurar_boton_login_en_home(app: Any) -> None:
+    """Configura botón secundario para abrir herramientas en home."""
+    app.login_button.content = "Herramientas"
+    app.login_button.icon = ft.Icons.SETTINGS
+    app.login_button.style = BOTON_SECUNDARIO_SIN
+    app.login_button.on_click = lambda _: app.herramientas_dialog.open_dialog()
+
+
 def update_topbar(troute: ft.TemplateRoute, app: Any) -> None:
+    """Sincroniza visibilidad y comportamiento de botones según la ruta activa."""
     esta_en_login = troute.match("/")
     esta_en_home = troute.match("/home")
     app.backbutton.visible = not (esta_en_login or esta_en_home)
     app.login_button.visible = esta_en_login or esta_en_home
     if esta_en_login:
-        app.login_button.content = "Iniciar Sesión"
-        app.login_button.icon = None
-        app.login_button.style = BOTON_PRINCIPAL
-        app.login_button.on_click = app.login
+        _configurar_boton_login_en_login(app)
     elif esta_en_home:
-        app.login_button.content = "Herramientas"
-        app.login_button.icon = ft.Icons.SETTINGS
-        app.login_button.style = BOTON_SECUNDARIO_SIN
-        app.login_button.on_click = lambda _: app.herramientas_dialog.open_dialog()
+        _configurar_boton_login_en_home(app)
