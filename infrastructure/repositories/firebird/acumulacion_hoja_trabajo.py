@@ -38,6 +38,16 @@ class EstadoAcumulacion:
     conceptos_sin_filas_en_hoja: List[str] = field(default_factory=list)
 
 
+def _log_error_concepto(concepto_codigo: Any, detalle: str) -> None:
+    """Imprime errores asociados a un concepto con prefijo estándar."""
+    print(f"[ERROR] Concepto {concepto_codigo}: {detalle}")
+
+
+def _log_warning_concepto(concepto_codigo: Any, detalle: str) -> None:
+    """Imprime advertencias asociadas a un concepto con prefijo estándar."""
+    print(f"[WARNING] Concepto {concepto_codigo}: {detalle}")
+
+
 def _normalizar_tipo_elemento(raw: Any) -> str:
     """Devuelve T/C/B/A en mayúscula; la BD puede devolver distinta capitalización o bytes."""
     if raw is None:
@@ -853,7 +863,7 @@ def _construir_sets_por_atributos(
                 advertencias_sin_datos_map=advertencias_sin_datos_map,
             )
         except Exception as error:
-            print(f"[ERROR] Concepto {concepto_codigo}, Atributo {attr[0]}: {error}")
+            _log_error_concepto(concepto_codigo, f"Atributo {attr[0]}: {error}")
             raise
 
     return total_registros_antes_unificar, identidades_unicas_antes
@@ -948,11 +958,11 @@ def _obtener_elemento_valido_con_log(cur: Any, concepto: Dict[str, Any], concept
     try:
         elemento = _obtener_elemento_concepto(cur, concepto.get("id"))
     except Exception as error:
-        print(f"[ERROR] Concepto {concepto_codigo}: {error}")
+        _log_error_concepto(concepto_codigo, str(error))
         raise
 
     if not elemento:
-        print(f"[WARNING] Concepto {concepto_codigo} omitido: no tiene elemento válido")
+        _log_warning_concepto(concepto_codigo, "omitido: no tiene elemento válido")
         return None
     return elemento
 
@@ -975,7 +985,7 @@ def _obtener_atributos_con_log(cur: Any, elemento_id: Any, concepto_codigo: Any)
     try:
         atributos = _obtener_atributos_elemento(cur, elemento_id)
     except Exception as error:
-        print(f"[ERROR] Obteniendo atributos para concepto {concepto_codigo}: {error}")
+        _log_error_concepto(concepto_codigo, f"obteniendo atributos: {error}")
         raise
     print(f"[ACUMULACIÓN]   Atributos ({len(atributos)}): {atributos}")
     return atributos
