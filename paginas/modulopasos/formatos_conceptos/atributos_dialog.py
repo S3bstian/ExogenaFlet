@@ -6,6 +6,11 @@ from ui.buttons import BOTON_PRINCIPAL, BOTON_SECUNDARIO_SIN
 from ui.colors import PINK_200, GREY_700
 from ui.snackbars import actualizar_mensaje_en_control, mostrar_mensaje_overlay
 from utils.ui_sync import ejecutar_en_ui, loader_row_fin, loader_row_trabajo
+
+
+_GLOBAL_GRUPO_VALIDO = frozenset({"T", "C", "B", "A"})
+
+
 class AtributosDialog:
     def __init__(self, page, formatos_dialog, container):
         self.page = page
@@ -17,6 +22,7 @@ class AtributosDialog:
 
         self._config_cache = None
         self._last_opciones_args = None
+        self._tglobal_catalogo = "T"
 
         self.mensaje = ft.Text("", size=14, italic=True, visible=False)
         self.tipo_acumulado = None
@@ -27,44 +33,81 @@ class AtributosDialog:
         self.concepto = None
         self._btn_buscar_cuentas = None
 
+    @staticmethod
+    def _clase_atributo_numerica(atributo: dict) -> int | None:
+        raw = atributo.get("Clase", atributo.get("clase"))
+        try:
+            return int(raw) if raw is not None and str(raw).strip() != "" else None
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _normalizar_tglobal(tglobal) -> str:
+        t = (tglobal or "").strip().upper()
+        return t if t in _GLOBAL_GRUPO_VALIDO else "T"
+
+    def _opciones_tipo_acumulado(self, todos_acumulados, tglobal: str) -> list[ft.DropdownOption]:
+        opciones: list[ft.DropdownOption] = []
+        for opt in todos_acumulados:
+            tipo_id = opt[0]
+            global_opt = str(opt[4]).strip().upper() if len(opt) > 4 and opt[4] else ""
+            if global_opt not in _GLOBAL_GRUPO_VALIDO or global_opt != tglobal:
+                continue
+            nombre_visible = opt[1] if len(opt) > 1 else str(tipo_id)
+            descripcion_tooltip = opt[2] if len(opt) > 2 else ""
+            opciones.append(
+                ft.DropdownOption(
+                    key=str(tipo_id),
+                    text=nombre_visible,
+                    content=ft.Text(
+                        nombre_visible,
+                        tooltip=ft.Tooltip(message=descripcion_tooltip or ""),
+                    ),
+                )
+            )
+        return opciones
+
+    @staticmethod
+    def _ajustar_valor_acumulado_por_defecto(
+        tipo_acumulado: str, opciones_filtradas: list[ft.DropdownOption]
+    ) -> str:
+        if tipo_acumulado == "0" and opciones_filtradas:
+            return str(getattr(opciones_filtradas[0], "key", opciones_filtradas[0].text))
+        return tipo_acumulado
+
+    def _persistir_cache_actual(self) -> None:
+        """Sincroniza `_config_cache` con controles y cuentas en memoria."""
+        self._config_cache = (
+            self.tipo_acumulado.value,
+            self.tipo_cuenta.value,
+            [dict(c) for c in self.cuentas_seleccionadas],
+        )
+
+    def _abrir_catalogo_cuentas(self, e):
+        if self.tipo_cuenta.value == "0":
+            actualizar_mensaje_en_control("Debe seleccionar un tipo de cuenta antes de continuar", self.mensaje)
+            return
+
+        self._persistir_cache_actual()
+        self.mensaje.visible = False
+        if self._btn_buscar_cuentas:
+            self._btn_buscar_cuentas.disabled = True
+        self.page.update()
+        loop = self.page.session.connection.loop
+
+        def _abrir():
+            self.page.pop_dialog()
+            self.cuentas.open_cuentas(int(self.tipo_cuenta.value), self.concepto, self._tglobal_catalogo)
+
+        loop.call_later(0.05, _abrir)
+
     # ----------------- configuración por atributo -----------------
     def open_opciones_dialog(self, formato, atributo, concepto, tglobal):
         self.concepto = concepto
+        self._tglobal_catalogo = self._normalizar_tglobal(tglobal)
 
-        # ==================== CLASE=2: DAT0SESPECIFICOS ====================
-        clase_atributo = atributo.get("Clase", atributo.get("clase"))
-        try:
-            clase_val = int(clase_atributo) if clase_atributo is not None and str(clase_atributo).strip() != "" else None
-        except Exception:
-            clase_val = None
-
-        if clase_val == 2:
+        if self._clase_atributo_numerica(atributo) == 2:
             return self._open_dialog_datos_especificos(atributo)
-
-        def abrir_cuentas_dialog(e):
-            if self.tipo_cuenta.value == "0":
-                actualizar_mensaje_en_control("Debe seleccionar un tipo de cuenta antes de continuar", self.mensaje)
-                return
-
-            # Guardar estado actual en cache antes de cerrar
-            self._config_cache = (
-                self.tipo_acumulado.value,
-                self.tipo_cuenta.value,
-                [dict(c) for c in self.cuentas_seleccionadas],
-            )
-
-            self.mensaje.visible = False
-            if self._btn_buscar_cuentas:
-                self._btn_buscar_cuentas.disabled = True
-            self.page.update()
-            loop = self.page.session.connection.loop
-
-            def _abrir():
-                self.page.pop_dialog()
-                self.cuentas.open_cuentas(int(self.tipo_cuenta.value), concepto, tglobal)
-
-            # Permite pintar estado ocupado antes de abrir el diálogo hijo.
-            loop.call_later(0.05, _abrir)
 
         self._last_opciones_args = [formato, atributo]
         self.mensaje.visible = False
@@ -104,50 +147,19 @@ class AtributosDialog:
                     loader_row_fin(self.page, _ldr)
                 if _slot is not None:
                     _slot.visible = False
-                self._montar_opciones_dialog_ui(
-                    formato, atributo, concepto, tglobal, abrir_cuentas_dialog, todos_acumulados
-                )
+                self._montar_opciones_dialog_ui(atributo, todos_acumulados)
 
             ejecutar_en_ui(self.page, _ui)
 
         self.page.run_thread(_worker)
 
-    def _montar_opciones_dialog_ui(self, formato, atributo, concepto, tglobal, abrir_cuentas_dialog, todos_acumulados):
+    def _montar_opciones_dialog_ui(self, atributo, todos_acumulados):
         tipo_acumulado, tipo_cuenta, cuentas_a_mostrar = self._config_cache
-        tglobal = (tglobal or "").strip().upper()
-        if tglobal not in {"T", "C", "B", "A"}:
-            tglobal = "T"
+        tglobal = self._tglobal_catalogo
 
-        opciones_filtradas: list[ft.DropdownOption] = []
-        for opt in todos_acumulados:
-            # Forma esperada (desde el repositorio): (Id, Nombre, Descripcion, Mostrar_cuentas, Global)
-            tipo_id = opt[0]
-            global_opt = (str(opt[4]).strip().upper() if len(opt) > 4 and opt[4] else "")
+        opciones_filtradas = self._opciones_tipo_acumulado(todos_acumulados, tglobal)
+        tipo_acumulado = self._ajustar_valor_acumulado_por_defecto(tipo_acumulado, opciones_filtradas)
 
-            # Solo mostrar opciones cuyo grupo GLOBAL coincide con el tipo global del elemento.
-            if global_opt not in {"T", "C", "B", "A"}:
-                continue
-            if global_opt != tglobal:
-                continue
-
-            nombre_visible = opt[1] if len(opt) > 1 else str(tipo_id)
-            descripcion_tooltip = opt[2] if len(opt) > 2 else ""
-
-            opciones_filtradas.append(
-                ft.DropdownOption(
-                    key=str(tipo_id),
-                    text=nombre_visible,
-                    content=ft.Text(
-                        nombre_visible,
-                        tooltip=ft.Tooltip(message=descripcion_tooltip or ""),
-                    ),
-                )
-            )
-        
-        if tipo_acumulado == "0" and opciones_filtradas:
-            tipo_acumulado = str(getattr(opciones_filtradas[0], "key", opciones_filtradas[0].text))
-
-        # Construir controles
         self.tipo_acumulado = DropdownCompact(
             options=opciones_filtradas,
             width=250,
@@ -164,15 +176,13 @@ class AtributosDialog:
         )
 
         self.cuentas_seleccionadas = [dict(c) for c in cuentas_a_mostrar]
-        # Contenedor simple; el scroll lo maneja el Column padre del diálogo.
         self.cuentas_container = ft.Column(spacing=-11)
 
-        # filas dependientes de visibilidad
         self._btn_buscar_cuentas = ft.IconButton(
             icon=ft.Icons.SEARCH,
             style=BOTON_SECUNDARIO_SIN,
             tooltip="Buscar cuentas",
-            on_click=abrir_cuentas_dialog,
+            on_click=self._abrir_catalogo_cuentas,
         )
 
         self.fila_tipo_cuenta = ft.Row(
@@ -455,7 +465,7 @@ class AtributosDialog:
     def recibir_cuentas(self, cuentas):
         # La selección del catálogo reemplaza completamente la selección previa.
         self.cuentas_seleccionadas = [dict(c) for c in cuentas]
-        self._config_cache = (self.tipo_acumulado.value, self.tipo_cuenta.value, self.cuentas_seleccionadas)
+        self._persistir_cache_actual()
         self.mostrar_cuentas_seleccionadas()
 
     def mostrar_cuentas_seleccionadas(self):
@@ -494,12 +504,12 @@ class AtributosDialog:
 
     def quitar_cuenta(self, cuenta):
         self.cuentas_seleccionadas = [c for c in self.cuentas_seleccionadas if c != cuenta]
-        self._config_cache = (self.tipo_acumulado.value, self.tipo_cuenta.value, self.cuentas_seleccionadas)
+        self._persistir_cache_actual()
         self.mostrar_cuentas_seleccionadas()
 
     def toggle_valorabsoluto(self, cuenta, estado):
         cuenta["valorabsoluto"] = "N" if estado == False else "S"
-        self._config_cache = (self.tipo_acumulado.value, self.tipo_cuenta.value, self.cuentas_seleccionadas)
+        self._persistir_cache_actual()
         tabla = "Cuentas_trib" if str(self.tipo_cuenta.value) == "1" else "Cuentas_cont"
         self._auth_uc.actualizar_activo(
             tabla, "valorabsoluto", "id", cuenta["id"], estado, session.EMPRESA_ACTUAL["codigo"]
@@ -513,11 +523,7 @@ class AtributosDialog:
             self.cuentas_seleccionadas,
         )
         if result:
-            self._config_cache = (
-                self.tipo_acumulado.value,
-                self.tipo_cuenta.value,
-                [dict(c) for c in self.cuentas_seleccionadas],
-            )
+            self._persistir_cache_actual()
             actualizar_mensaje_en_control("Configuración guardada correctamente", self.mensaje, ft.Colors.GREEN_400)
         else:
             actualizar_mensaje_en_control("Ocurrieron errores al guardar cuentas. Revisa la consola para más detalles.", self.mensaje)
