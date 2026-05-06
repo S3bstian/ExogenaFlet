@@ -923,29 +923,40 @@ class TrabajoDialog:
                     return descripcion
         return None
 
+    def _valor_tercero_normalizado(self, campo_tercero: str, valor_tercero) -> str:
+        """Normaliza valor de tercero según el tipo de campo mapeado."""
+        if campo_tercero == "tipodocumento":
+            codigo_tipo = obtener_codigo_tipodoc(valor_tercero)
+            return codigo_tipo if codigo_tipo else (str(valor_tercero) if valor_tercero else "")
+        return str(valor_tercero) if valor_tercero else ""
+
+    def _aplicar_campos_tercero_en_datos(self, tercero: dict) -> None:
+        """Mapea campos del tercero a atributos de formulario y actualiza `self.datos`."""
+        for descripcion, tipoacumulado in self.atributos_info.items():
+            if not self._es_campo_de_tercero(tipoacumulado, descripcion):
+                continue
+            for campo_tercero, valor_tercero in tercero.items():
+                if not self._mapear_tercero_a_atributo(campo_tercero, descripcion):
+                    continue
+                self.datos[descripcion] = self._valor_tercero_normalizado(campo_tercero, valor_tercero)
+                break
+
+    def _refrescar_o_construir_dialogo_formulario(self) -> None:
+        """Actualiza contenido del diálogo actual o construye uno nuevo cuando aún no existe."""
+        if self.dialog:
+            # Conservar lo ya escrito en el grid antes de reconstruir controles.
+            self.datos.update(self._valores_desde_controles_solo_grid())
+            self._refrescar_contenido_dialogo()
+            return
+        self._build_dialogo_formulario()
+
     # ==================== APLICACIÓN DE DATOS ====================
     
     def _aplicar_tercero_seleccionado(self, tercero):
         """Aplica los datos del tercero seleccionado a self.datos y refresca el contenido del diálogo."""
         self.tercero_actual = tercero
-        
-        for descripcion, tipoacumulado in self.atributos_info.items():
-            if self._es_campo_de_tercero(tipoacumulado, descripcion):
-                for campo_tercero, valor_tercero in tercero.items():
-                    if self._mapear_tercero_a_atributo(campo_tercero, descripcion):
-                        if campo_tercero == "tipodocumento":
-                            codigo_tipo = obtener_codigo_tipodoc(valor_tercero)
-                            self.datos[descripcion] = codigo_tipo if codigo_tipo else str(valor_tercero) if valor_tercero else ""
-                        else:
-                            self.datos[descripcion] = str(valor_tercero) if valor_tercero else ""
-                        break
-        
-        if self.dialog:
-            # Conservar lo ya escrito en el grid antes de reconstruir controles.
-            self.datos.update(self._valores_desde_controles_solo_grid())
-            self._refrescar_contenido_dialogo()
-        else:
-            self._build_dialogo_formulario()
+        self._aplicar_campos_tercero_en_datos(tercero)
+        self._refrescar_o_construir_dialogo_formulario()
 
     def _refrescar_contenido_dialogo(self):
         """Reconstruye solo el content del diálogo (sin recrear acciones/título)."""
@@ -1910,52 +1921,47 @@ class TrabajoDialog:
         """Llena el dropdown de departamentos basado en el país seleccionado."""
         if not self.drop_dep:
             return
-        
+
         pais_key = self._key_from_label(pais_label)
         deps_iter = [(k, v[0]) for k, v in DEPARTAMENTOS.items() if str(v[1]) == str(pais_key)]
-        
-        opts = []
-        selected_value = None
-        desc_depto = self._obtener_descripcion_atributo("departamento")
-        valor_actual = self.datos.get(desc_depto) if desc_depto else None
-        
-        for k, name in deps_iter:
-            label_txt = self._label(k, name)
-            opts.append(ft.DropdownOption(key=label_txt, text=label_txt))
-            if valor_actual and str(valor_actual) == str(k):
-                selected_value = label_txt
-                if selected_value:
-                    self._llenar_municipios_por_departamento_label(label_txt)
-        
-        self.drop_dep.options = opts
+        valor_actual_depto = self._valor_actual_attr_tercero("departamento")
+        opciones, selected_value = self._opciones_y_seleccion_desde_items(deps_iter, valor_actual_depto)
+        self.drop_dep.options = opciones
         self.drop_dep.value = selected_value
+        if selected_value:
+            self._llenar_municipios_por_departamento_label(selected_value)
     
     def _llenar_municipios_por_departamento_label(self, dept_label):
         """Llena el dropdown de municipios basado en el departamento seleccionado."""
         if not self.drop_mun:
             return
-        
+
         dept_key = self._key_from_label(dept_label)
         dept_key_int = int(dept_key) if str(dept_key).isdigit() else None
-        
         muns_iter = [
             (v[0], v[1]) for _, v in MUNICIPIOS.items()
             if (dept_key_int and int(v[2]) == dept_key_int) or str(v[2]) == str(dept_key)
         ]
-        
-        opts = []
-        selected_value = None
-        desc_muni = self._obtener_descripcion_atributo("municipio")
-        valor_actual = self.datos.get(desc_muni) if desc_muni else None
-        
-        for codigo, name in muns_iter:
-            label_txt = self._label(codigo, name)
-            opts.append(ft.DropdownOption(key=label_txt, text=label_txt))
+        valor_actual_muni = self._valor_actual_attr_tercero("municipio")
+        opciones, selected_value = self._opciones_y_seleccion_desde_items(muns_iter, valor_actual_muni)
+        self.drop_mun.options = opciones
+        self.drop_mun.value = selected_value
+
+    def _valor_actual_attr_tercero(self, campo: str):
+        """Obtiene valor actual de `self.datos` según el mapeo del campo lógico de tercero."""
+        descripcion = self._obtener_descripcion_atributo(campo)
+        return self.datos.get(descripcion) if descripcion else None
+
+    def _opciones_y_seleccion_desde_items(self, items: list[tuple], valor_actual) -> tuple[list[ft.DropdownOption], str | None]:
+        """Construye opciones label+texto y resuelve selección inicial por código actual."""
+        opciones: list[ft.DropdownOption] = []
+        selected_value: str | None = None
+        for codigo, nombre in items:
+            label_txt = self._label(codigo, nombre)
+            opciones.append(ft.DropdownOption(key=label_txt, text=label_txt))
             if valor_actual and str(valor_actual) == str(codigo):
                 selected_value = label_txt
-        
-        self.drop_mun.options = opts
-        self.drop_mun.value = selected_value
+        return opciones, selected_value
     
     def _on_pais_change(self, e):
         """Maneja el cambio de país."""
