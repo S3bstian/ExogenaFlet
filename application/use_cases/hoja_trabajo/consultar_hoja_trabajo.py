@@ -38,7 +38,7 @@ class ConsultarHojaTrabajoUseCase:
 
     def obtener_conceptos_en_hoja(self) -> List[ConceptoHojaTrabajo]:
         resultado = self._consulta_port.obtener_hoja_trabajo(solo_conceptos=True) or []
-        return [ConceptoHojaTrabajo.from_mapping(c) for c in resultado]
+        return [ConceptoHojaTrabajo.from_mapping(mapeado) for mapeado in resultado]
 
     def obtener_concepto_completo(
         self,
@@ -54,9 +54,9 @@ class ConsultarHojaTrabajoUseCase:
         )
         encontrado = next(
             (
-                c
-                for c in lista_conceptos
-                if c.get("codigo") == codigo and c.get("formato") == formato
+                item
+                for item in lista_conceptos
+                if item.get("codigo") == codigo and item.get("formato") == formato
             ),
             None,
         )

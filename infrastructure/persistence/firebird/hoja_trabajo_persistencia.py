@@ -26,19 +26,15 @@ def agrupar_filas_hoja(
     get_id_concepto: Callable[[Tuple], Any],
     get_identidad: Callable[[Tuple], Any],
 ) -> List[Dict[str, Any]]:
-    """
-    Agrupa filas por (identidad, id_concepto): un grupo contiguo por par y lista de rows.
-
-    Se usa al armar vistas de HOJA_TRABAJO y en exportación XML cuando se reordenan filas.
-    """
+    """Agrupa filas contiguas con el mismo par (identidad, id_concepto)."""
     if not rows:
         return []
     groups: List[Dict[str, Any]] = []
     grupo_actual: Optional[Dict[str, Any]] = None
-    for r in rows:
-        rid = get_id(r)
-        id_concepto = get_id_concepto(r)
-        identidad = str(get_identidad(r) or "").strip()
+    for fila in rows:
+        rid = get_id(fila)
+        id_concepto = get_id_concepto(fila)
+        identidad = str(get_identidad(fila) or "").strip()
         if (
             grupo_actual is None
             or grupo_actual["identidad"] != identidad
@@ -50,15 +46,15 @@ def agrupar_filas_hoja(
                 "identidad": identidad,
                 "id_concepto": id_concepto,
                 "primer_id": rid,
-                "rows": [r],
+                "rows": [fila],
             }
         else:
-            grupo_actual["rows"].append(r)
+            grupo_actual["rows"].append(fila)
     if grupo_actual is not None:
         groups.append(grupo_actual)
 
-    for g in groups:
-        g["group_key"] = f"{g['id_concepto']}|{g['identidad']}"
+    for grupo in groups:
+        grupo["group_key"] = f"{grupo['id_concepto']}|{grupo['identidad']}"
     return groups
 
 
@@ -106,7 +102,9 @@ def _distinct_valores_hoja_atributo(cur, id_concepto: int, id_atr: int) -> List[
         """,
         (id_concepto, id_atr),
     )
-    return sorted({str(r[0]).strip() for r in cur.fetchall() if r and r[0] is not None})
+    return sorted(
+        {str(fila[0]).strip() for fila in cur.fetchall() if fila and fila[0] is not None}
+    )
 
 
 def _identidades_con_valor_atributo(cur, id_concepto: int, id_atr: int, valor: str) -> set:
@@ -118,14 +116,14 @@ def _identidades_con_valor_atributo(cur, id_concepto: int, id_atr: int, valor: s
         """,
         (id_concepto, id_atr, valor),
     )
-    return {r[0] for r in cur.fetchall() if r and r[0] is not None}
+    return {fila[0] for fila in cur.fetchall() if fila and fila[0] is not None}
 
 
 def _update_hoja_valor_por_identidades(
     cur, valor: str, id_concepto: int, id_atr: int, identidades: List
 ) -> None:
-    for i in range(0, len(identidades), _FIDEI_BATCH_IN):
-        chunk = identidades[i : i + _FIDEI_BATCH_IN]
+    for inicio in range(0, len(identidades), _FIDEI_BATCH_IN):
+        chunk = identidades[inicio : inicio + _FIDEI_BATCH_IN]
         marks = ",".join("?" for _ in chunk)
         cur.execute(
             f"""
@@ -174,10 +172,7 @@ def _resolver_id_y_config_concepto(
     mensaje_error_invalid: str,
     mensaje_error_not_found: str,
 ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[str]]:
-    """
-    Resuelve el ID de concepto y su configuración en CONCEPTOS.
-    Devuelve (id_concepto, concepto_config, error). Si error != None, el flujo debe abortar.
-    """
+    """Devuelve (id_concepto, fila_dict_config, mensaje_error|None)."""
     codigo_formato = _obtener_codigo_y_formato_concepto(concepto)
     if not codigo_formato:
         return None, None, mensaje_error_invalid
@@ -201,10 +196,7 @@ def _resolver_id_y_config_concepto(
 
 
 def _obtener_primer_valor_por_registro(cur, id_concepto: int) -> Dict[str, Tuple[int, Any]]:
-    """
-    Para cada registro (identidad) del concepto: retorna (hoja_id, valor) donde valor
-    es el VALOR de la fila con menor HOJA_TRABAJO.ID entre las que tienen atributo CLASE=1.
-    """
+    """Por identidad: primera fila (menor HOJA_TRABAJO.ID) con atributo CLASE=1."""
     cur.execute(
         """
         SELECT ht.ID, TRIM(ht.IDENTIDADTERCERO), ht.VALOR
@@ -322,12 +314,7 @@ def delete_hoja_trabajo_por_id_concepto_cursor(
     filtro: Optional[float] = None,
     campo_id: Optional[int] = None,
 ) -> None:
-    """
-    Ejecuta DELETE en HOJA_TRABAJO para un IDCONCEPTO usando el cursor dado (sin commit).
-
-    Sin filtro numérico borra todas las filas del concepto. Con ``filtro`` y ``campo_id``
-    borra solo identidades cuyo valor en ese atributo sea menor que el umbral (cuantías).
-    """
+    """DELETE por concepto; con filtro+campo_id solo filas con cuantía bajo umbral."""
     if filtro is None or campo_id is None:
         cur.execute(
             "DELETE FROM HOJA_TRABAJO WHERE IDCONCEPTO = ?",
