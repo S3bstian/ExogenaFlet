@@ -73,6 +73,19 @@ def _finalizar_arranque_en_ruta_inicial(page: ft.Page, app: "InformacionExogenaA
     app.route_change(None)
 
 
+def _continuar_arranque_inicial(page: ft.Page, app: "InformacionExogenaApp", mensaje_arranque: ft.Text) -> None:
+    """Ejecuta validación de catálogos y navega a la ruta inicial al finalizar."""
+    _mostrar_mensaje_arranque(page, mensaje_arranque, "🔄 Validando bases de datos...")
+    time.sleep(0.5)
+
+    result = app.container.cargar_catalogos_uc.ejecutar()
+    _mostrar_mensaje_arranque(page, mensaje_arranque, result)
+    time.sleep(0.8 if result.startswith("✅") else 300)
+
+    _ocultar_mensaje_arranque(page, mensaje_arranque)
+    _finalizar_arranque_en_ruta_inicial(page, app)
+
+
 class InformacionExogenaApp:
     def __init__(self, page: ft.Page):
         """Inicializa página, contenedor de casos de uso y handlers de navegación."""
@@ -273,19 +286,32 @@ class InformacionExogenaApp:
     def _loader_overlay_mostrar(self, mostrar: bool):
         """Loader en overlay (top-right). Add/remove explícito: visible solo durante transiciones."""
         if mostrar:
-            if not getattr(self, "_loader_ctn", None) or self._loader_ctn not in self.page.overlay:
-                self._loader_ctn = ft.Container(
-                    content=self.loader_overlay,
-                    top=18,
-                    right=155,
-                    alignment=ft.Alignment(255, 0),
-                )
-                self.page.overlay.append(self._loader_ctn)
+            self._asegurar_loader_overlay()
         else:
-            ctn = getattr(self, "_loader_ctn", None)
-            if ctn and ctn in self.page.overlay:
-                self.page.overlay.remove(ctn)
+            self._retirar_loader_overlay()
         self.page.update()
+
+    def _crear_loader_overlay_container(self) -> ft.Container:
+        """Construye el contenedor overlay del loader de transición."""
+        return ft.Container(
+            content=self.loader_overlay,
+            top=18,
+            right=155,
+            alignment=ft.Alignment(255, 0),
+        )
+
+    def _asegurar_loader_overlay(self) -> None:
+        """Asegura que el loader exista y esté montado en overlay."""
+        if not getattr(self, "_loader_ctn", None):
+            self._loader_ctn = self._crear_loader_overlay_container()
+        if self._loader_ctn not in self.page.overlay:
+            self.page.overlay.append(self._loader_ctn)
+
+    def _retirar_loader_overlay(self) -> None:
+        """Retira el loader del overlay cuando está presente."""
+        ctn = getattr(self, "_loader_ctn", None)
+        if ctn and ctn in self.page.overlay:
+            self.page.overlay.remove(ctn)
 
     @staticmethod
     def _resolver_contexto_ruta(
@@ -414,19 +440,11 @@ def main(page: ft.Page):
     page.update()  # Aplica full_screen y demás propiedades de ventana
     app = InformacionExogenaApp(page)
 
-    def _continuar_arranque() -> None:
-        """Tras condiciones + activación (si aplica): valida catálogos y pinta la ruta inicial."""
-        _mostrar_mensaje_arranque(page, mensaje_arranque, "🔄 Validando bases de datos...")
-        time.sleep(0.5)
-
-        result = app.container.cargar_catalogos_uc.ejecutar()
-        _mostrar_mensaje_arranque(page, mensaje_arranque, result)
-        time.sleep(0.8 if result.startswith("✅") else 300)
-
-        _ocultar_mensaje_arranque(page, mensaje_arranque)
-        _finalizar_arranque_en_ruta_inicial(page, app)
-
-    ejecutar_si_corresponde(page, app, _continuar_arranque)
+    ejecutar_si_corresponde(
+        page,
+        app,
+        lambda: _continuar_arranque_inicial(page, app, mensaje_arranque),
+    )
 
 if __name__ == "__main__":
     ft.run(main)  # Flet 0.80: run(main) reemplaza a app(target=main)
