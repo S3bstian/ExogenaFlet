@@ -67,56 +67,80 @@ class FormatosPage(ft.Column):
         self.submenus[nombre] = submenu
         return ft.Column([ft.Row([btn]), submenu])
 
+    def _set_loader_overlay(self, visible: bool) -> None:
+        """Muestra/oculta loader overlay global cuando el app lo soporta."""
+        if hasattr(self._app, "_loader_overlay_mostrar"):
+            self._app._loader_overlay_mostrar(visible)
+
+    def _cargar_conceptos_formato(self, nombre: str):
+        """Obtiene conceptos asociados al formato seleccionado."""
+        return self._formatos_uc.obtener_conceptos(0, 1000, nombre)
+
+    def _poblar_submenu_conceptos(self, submenu: ft.Column, nombre: str, formato, conceptos: list) -> None:
+        """Reconstruye opciones de concepto en el submenú del formato."""
+        titulo = submenu.controls[0]
+        submenu.controls = [titulo]
+        for c in conceptos:
+            submenu.controls.append(
+                ft.TextButton(
+                    content=ft.Text(
+                        f"{c['codigo']} - {c['descripcion']}",
+                        no_wrap=False,
+                    ),
+                    style=BOTON_SUBLISTA,
+                    on_click=lambda e, c=c: self.open_estructura(formato, c),
+                    margin=ft.margin.only(left=55, top=5),
+                )
+            )
+        self._toggle_submenu_visible(nombre, submenu)
+        submenu.update()
+        self._page.update()
+
+    def _toggle_submenu_visible(self, nombre: str, submenu: ft.Column) -> None:
+        """Alterna visibilidad del submenú objetivo y colapsa los demás."""
+        for n, s in self.submenus.items():
+            s.visible = (n == nombre and not submenu.visible)
+
+    def _mostrar_error_carga_conceptos(self, ex: Exception) -> None:
+        """Muestra error de carga de conceptos con overlay finalizado."""
+        self._set_loader_overlay(False)
+        mostrar_mensaje_overlay(self._page, f"Error al cargar conceptos: {ex}", 5000)
+
+    def _on_conceptos_formato_cargados(self, nombre: str, formato, submenu: ft.Column, conceptos: list) -> None:
+        """Actualiza UI al terminar carga de conceptos por formato."""
+        self._set_loader_overlay(False)
+        if not conceptos:
+            self.open_estructura(formato)
+            return
+        self._poblar_submenu_conceptos(submenu, nombre, formato, conceptos)
+
+    def _ejecutar_en_hilo(self, trabajo, on_success=None, on_error=None) -> None:
+        """Ejecuta trabajo en background y delega callbacks de éxito/error en UI thread."""
+        def _worker():
+            try:
+                resultado = trabajo()
+            except Exception as ex:
+                if on_error:
+                    ejecutar_en_ui(self._page, lambda ex=ex: on_error(ex))
+                return
+            if on_success:
+                ejecutar_en_ui(self._page, lambda resultado=resultado: on_success(resultado))
+        self._page.run_thread(_worker)
+
     def toggle_formato(self, nombre, formato):
         submenu = self.submenus[nombre]
         # Evita saltos de scroll: el loader visual para conceptos se muestra en overlay.
-        if hasattr(self._app, "_loader_overlay_mostrar"):
-            self._app._loader_overlay_mostrar(True)
-
-        def _worker():
-            try:
-                conceptos, _ = self._formatos_uc.obtener_conceptos(0, 1000, nombre)
-            except Exception as ex:
-                def _err():
-                    if hasattr(self._app, "_loader_overlay_mostrar"):
-                        self._app._loader_overlay_mostrar(False)
-                    mostrar_mensaje_overlay(self._page, f"Error al cargar conceptos: {ex}", 5000)
-
-                ejecutar_en_ui(self._page, _err)
-                return
-
-            def _ui():
-                if hasattr(self._app, "_loader_overlay_mostrar"):
-                    self._app._loader_overlay_mostrar(False)
-                if not conceptos:
-                    self.open_estructura(formato)
-                    return
-
-                titulo = submenu.controls[0]
-                submenu.controls = [titulo]
-
-                for c in conceptos:
-                    submenu.controls.append(
-                        ft.TextButton(
-                            content=ft.Text(
-                                f"{c['codigo']} - {c['descripcion']}",
-                                no_wrap=False,
-                            ),
-                            style=BOTON_SUBLISTA,
-                            on_click=lambda e, c=c: self.open_estructura(formato, c),
-                            margin=ft.margin.only(left=55, top=5),
-                        )
-                    )
-
-                for n, s in self.submenus.items():
-                    s.visible = (n == nombre and not s.visible)
-
-                submenu.update()
-                self._page.update()
-
-            ejecutar_en_ui(self._page, _ui)
-
-        self._page.run_thread(_worker)
+        self._set_loader_overlay(True)
+        self._ejecutar_en_hilo(
+            trabajo=lambda: self._cargar_conceptos_formato(nombre),
+            on_success=lambda resultado: self._on_conceptos_formato_cargados(
+                nombre,
+                formato,
+                submenu,
+                resultado[0] if resultado else [],
+            ),
+            on_error=self._mostrar_error_carga_conceptos,
+        )
 
     # ====================================================
     # VISTA PRINCIPAL
@@ -138,19 +162,22 @@ class FormatosPage(ft.Column):
     def actualizar_formatos(self):
         """Carga get_formatos en segundo plano y actualiza el ListView. Llamar desde on_enter."""
         loader_row_visibilidad(self._page, self.loader, True)
-        def _worker():
-            try:
-                formatos = self._formatos_uc.obtener_formatos()
-                self._listview.controls = [self.formato_menu(f) for f in formatos]
-                loader_row_fin(self._page, self.loader)
-            except Exception as e:
-                def _mostrar_error():
-                    loader_row_fin(self._page, self.loader)
-                    mostrar_mensaje_overlay(self._page, f"Error cargando formatos: {e}", 5555)
-                ejecutar_en_ui(self._page, _mostrar_error)
-                return
-            self._page.update()
-        self._page.run_thread(_worker)
+        self._ejecutar_en_hilo(
+            trabajo=self._formatos_uc.obtener_formatos,
+            on_success=self._on_formatos_cargados,
+            on_error=self._on_error_actualizar_formatos,
+        )
+
+    def _on_formatos_cargados(self, formatos: list) -> None:
+        """Pinta listado de formatos una vez completada la consulta."""
+        self._listview.controls = [self.formato_menu(f) for f in formatos]
+        loader_row_fin(self._page, self.loader)
+        self._page.update()
+
+    def _on_error_actualizar_formatos(self, e: Exception) -> None:
+        """Muestra error de consulta al cargar listado principal de formatos."""
+        loader_row_fin(self._page, self.loader)
+        mostrar_mensaje_overlay(self._page, f"Error cargando formatos: {e}", 5555)
 
     # ====================================================
     # DIÁLOGO ESTRUCTURA
@@ -184,25 +211,22 @@ class FormatosPage(ft.Column):
 
     def open_estructura(self, formato, concepto=None):
         loader_row_trabajo(self._page, self.loader, None, "Cargando estructura...")
+        self._ejecutar_en_hilo(
+            trabajo=lambda: self._cargar_datos_estructura(formato, concepto),
+            on_success=lambda datos: self._on_estructura_cargada(formato, concepto, datos),
+            on_error=self._on_error_open_estructura,
+        )
 
-        def _worker():
-            try:
-                estructura, formato_el = self._cargar_datos_estructura(formato, concepto)
-            except Exception as ex:
-                def _err():
-                    loader_row_fin(self._page, self.loader)
-                    mostrar_mensaje_overlay(self._page, f"Error al cargar la estructura: {ex}", 5000)
+    def _on_estructura_cargada(self, formato, concepto, datos: tuple) -> None:
+        """Finaliza carga de estructura y abre diálogo con los datos obtenidos."""
+        estructura, formato_el = datos
+        loader_row_fin(self._page, self.loader)
+        self._mostrar_dialog_estructura(formato, concepto, estructura, formato_el)
 
-                ejecutar_en_ui(self._page, _err)
-                return
-
-            def _ui():
-                loader_row_fin(self._page, self.loader)
-                self._mostrar_dialog_estructura(formato, concepto, estructura, formato_el)
-
-            ejecutar_en_ui(self._page, _ui)
-
-        self._page.run_thread(_worker)
+    def _on_error_open_estructura(self, ex: Exception) -> None:
+        """Muestra error al cargar estructura de formato/concepto."""
+        loader_row_fin(self._page, self.loader)
+        mostrar_mensaje_overlay(self._page, f"Error al cargar la estructura: {ex}", 5000)
 
     def _mostrar_dialog_estructura(self, formato, concepto, estructura, formato_el):
         submenus = {}
