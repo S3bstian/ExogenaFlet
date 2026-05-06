@@ -401,11 +401,18 @@ class TomaInformacionPage(ft.Column):
         new_val = not all(cb.value for cb in self.checkboxes.values())
         filtro = (self.search_field.value or "").strip() or None
         if not new_val:
-            self._loader_trabajo("Quitando selección...")
-            self._desmarcar_todos_visibles()
-            self._loader_fin()
+            self._quitar_seleccion_masiva()
             return
+        self._iniciar_seleccion_masiva(filtro)
 
+    def _quitar_seleccion_masiva(self) -> None:
+        """Desmarca selección global visible con feedback de loader."""
+        self._loader_trabajo("Quitando selección...")
+        self._desmarcar_todos_visibles()
+        self._loader_fin()
+
+    def _iniciar_seleccion_masiva(self, filtro) -> None:
+        """Dispara selección masiva en hilo de fondo con estado ocupado."""
         self._loader_trabajo("Seleccionando todos los conceptos...")
         self._page.run_thread(lambda: self._seleccionar_todos_en_hilo(filtro))
 
@@ -594,22 +601,38 @@ class TomaInformacionPage(ft.Column):
             "En la hoja se borrarán solo los conceptos que va a acumular y se volverán a generar sus filas. "
             "El resto de conceptos cargados en la hoja no cambia. ¿Desea continuar?"
         )
+        self._mostrar_confirmacion_acumulacion(mensaje)
 
-        def aceptar_acumulacion(_e=None):
-            self._cerrar_snackbar_confirm_acum()
-            self._ejecutar_acumulacion_con_progreso()
+    def _aceptar_acumulacion(self, _e=None) -> None:
+        """Acción de confirmación para iniciar acumulación masiva."""
+        self._cerrar_snackbar_confirm_acum()
+        self._ejecutar_acumulacion_con_progreso()
 
-        texto = ft.Text(mensaje, color=PINK_800, size=14, expand=True)
-        botones = [
-            ft.TextButton("Cancelar", icon=ft.Icons.CLOSE, style=BOTON_SECUNDARIO_SIN, on_click=lambda _e: self._cerrar_snackbar_confirm_acum()),
+    def _botones_confirmacion_acumulacion(self) -> list[ft.Control]:
+        """Construye botones del snackbar de confirmación de acumulación."""
+        return [
+            ft.TextButton(
+                "Cancelar",
+                icon=ft.Icons.CLOSE,
+                style=BOTON_SECUNDARIO_SIN,
+                on_click=lambda _e: self._cerrar_snackbar_confirm_acum(),
+            ),
             ft.Button(
                 "Acumular",
                 icon=ft.Icons.ADD_CHART_OUTLINED,
                 style=BOTON_PRINCIPAL,
-                on_click=aceptar_acumulacion,
+                on_click=self._aceptar_acumulacion,
             ),
         ]
-        cabecera = cabecera_snackbar_herramienta(ft.Icons.INFO_OUTLINE, texto, botones)
+
+    def _mostrar_confirmacion_acumulacion(self, mensaje: str) -> None:
+        """Muestra snackbar persistente para confirmar acumulación de seleccionados."""
+        texto = ft.Text(mensaje, color=PINK_800, size=14, expand=True)
+        cabecera = cabecera_snackbar_herramienta(
+            ft.Icons.INFO_OUTLINE,
+            texto,
+            self._botones_confirmacion_acumulacion(),
+        )
         snack = crear_snackbar(
             ft.Column(controls=[cabecera], spacing=8, tight=True),
             duration=999999999,
@@ -625,7 +648,14 @@ class TomaInformacionPage(ft.Column):
         loader_bottom = crear_ring(indeterminado=False, size=SIZE_LARGE)
         bottom_text = ft.Text("Preparando...", size=16)
         cancel_ev = threading.Event()
+        btn_cancelar = self._crear_boton_cancelar_acumulacion(cancel_ev, bottom_text)
+        bottomsheet = self._crear_bottomsheet_progreso(loader_bottom, bottom_text, btn_cancelar)
+        self._page.show_dialog(bottomsheet)
+        self._page.update()
+        self._ejecutar_hilo_acumulacion(loader_bottom, bottom_text, cancel_ev)
 
+    def _crear_boton_cancelar_acumulacion(self, cancel_ev: threading.Event, bottom_text: ft.Text) -> ft.TextButton:
+        """Construye botón cancelar con actualización de estado visual en progreso."""
         def _on_cancel(_):
             cancel_ev.set()
             btn_cancelar.disabled = True
@@ -638,8 +668,16 @@ class TomaInformacionPage(ft.Column):
             on_click=_on_cancel,
             style=BOTON_SECUNDARIO_SIN,
         )
+        return btn_cancelar
 
-        bottomsheet = ft.BottomSheet(
+    def _crear_bottomsheet_progreso(
+        self,
+        loader_bottom: ft.Control,
+        bottom_text: ft.Text,
+        btn_cancelar: ft.TextButton,
+    ) -> ft.BottomSheet:
+        """Construye bottom sheet modal con progreso y acción de cancelación."""
+        return ft.BottomSheet(
             ft.Container(
                 padding=20,
                 content=ft.Column(
@@ -663,9 +701,8 @@ class TomaInformacionPage(ft.Column):
             size_constraints=ft.BoxConstraints(max_height=260, max_width=420),
         )
 
-        self._page.show_dialog(bottomsheet)
-        self._page.update()
-
+    def _ejecutar_hilo_acumulacion(self, loader_bottom, bottom_text, cancel_ev) -> None:
+        """Ejecuta proceso de acumulación en hilo de fondo."""
         self._page.run_thread(
             lambda: self._acumular_en_hilo(
                 loader_bottom=loader_bottom,
