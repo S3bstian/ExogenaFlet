@@ -5,29 +5,45 @@ from ui.fields import creador_campo_texto
 from utils.validators import set_campo_error
 
 
+_TEXTO_AVISO_CORREO = "Se enviará un código de verificación a su correo electrónico."
+
+
 class CambioContraDialog:
     def __init__(self, page: ft.Page):
         self.page = page
 
-    def open_dialog(self):
-        correo = creador_campo_texto("Ingrese su correo registrado", "")
+    def _validar_correo_no_vacio(self, campo_correo: ft.TextField) -> bool:
+        """Exige texto en el campo; marca error visible si falta."""
+        if campo_correo.value and campo_correo.value.strip():
+            return True
+        set_campo_error(campo_correo, "Ingrese un correo válido")
+        return False
 
-        def close(_):
-            if not correo.value.strip():
-                set_campo_error(correo, "Ingrese un correo válido")
-                self.page.update()
-                return
-            # aquí en el futuro iría la lógica de envío del código al correo
-            self.page.pop_dialog()
+    def _on_continuar(self, campo_correo: ft.TextField, _event):
+        if not self._validar_correo_no_vacio(campo_correo):
             self.page.update()
+            return
+        # Aquí en el futuro iría la lógica de envío del código al correo.
+        self.page.pop_dialog()
+        self.page.update()
 
-        dialog = ft.AlertDialog(
+    def _build_dialog(self, campo_correo: ft.TextField) -> ft.AlertDialog:
+        return ft.AlertDialog(
             title=ft.Text("Recuperar contraseña", text_align=ft.TextAlign.CENTER),
             content=ft.Column(
-                [correo, ft.Text("Se enviará un código de verificación a su correo electrónico.", size=12)],
+                [
+                    campo_correo,
+                    ft.Text(_TEXTO_AVISO_CORREO, size=12),
+                ],
                 tight=True,
             ),
-            actions=[ft.Button(content="Continuar", on_click=close, style=BOTON_PRINCIPAL)],
+            actions=[
+                ft.Button(
+                    content="Continuar",
+                    on_click=lambda e: self._on_continuar(campo_correo, e),
+                    style=BOTON_PRINCIPAL,
+                ),
+            ],
             actions_alignment=ft.MainAxisAlignment.END,
             bgcolor=ft.Colors.WHITE,
             modal=False,
@@ -36,5 +52,8 @@ class CambioContraDialog:
             shape=ft.RoundedRectangleBorder(radius=12),
         )
 
+    def open_dialog(self):
+        campo_correo = creador_campo_texto("Ingrese su correo registrado", "")
+        dialog = self._build_dialog(campo_correo)
         self.page.show_dialog(dialog)
         self.page.update()
