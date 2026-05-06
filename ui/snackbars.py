@@ -8,6 +8,15 @@ from ui.colors import PINK_600, PINK_800, WHITE
 from ui.theme import SNACKBAR_ELEVATION
 
 
+def _resolver_colores_snackbar(bgcolor=None, mensaje_peligro: bool = False) -> tuple:
+    """Resuelve colores de texto/fondo según prioridad del mensaje."""
+    if mensaje_peligro:
+        return WHITE, ft.Colors.RED_300
+    if bgcolor is not None:
+        return WHITE, bgcolor
+    return PINK_800, None
+
+
 def construir_snackbar_texto(
     texto: str,
     duration: int,
@@ -22,12 +31,7 @@ def construir_snackbar_texto(
     - `mensaje_peligro`: fondo rojo de confirmación (texto blanco).
     - `bgcolor`: fondo sólido (texto blanco), p. ej. avisos con marca de color.
     """
-    if mensaje_peligro:
-        txt, bg = WHITE, ft.Colors.RED_300
-    elif bgcolor is not None:
-        txt, bg = WHITE, bgcolor
-    else:
-        txt, bg = PINK_800, None  # Alineado con `snackbar_theme.content_text_style`
+    txt, bg = _resolver_colores_snackbar(bgcolor=bgcolor, mensaje_peligro=mensaje_peligro)
     return ft.SnackBar(
         content=ft.Text(texto, color=txt, size=size),
         bgcolor=bg,
@@ -68,6 +72,15 @@ def crear_snackbar(
     return snackbar
 
 
+def _configurar_accion_snackbar(snackbar: ft.SnackBar, action_text: str, action_color, on_action) -> None:
+    """Configura acción del snackbar solo cuando el contrato está completo."""
+    if not (action_text and on_action):
+        return
+    snackbar.action = action_text
+    snackbar.action_color = action_color
+    snackbar.on_action = on_action
+
+
 def mostrar_mensaje(
     page: ft.Page,
     texto: str,
@@ -98,14 +111,10 @@ def mostrar_mensaje(
 
     snackbar.on_dismiss = _al_cerrar
     if tiene_accion:
-
         def _on_action(e):
             _al_cerrar()
             on_action(e)
-
-        snackbar.action = action_text
-        snackbar.action_color = WHITE
-        snackbar.on_action = _on_action
+        _configurar_accion_snackbar(snackbar, action_text, WHITE, _on_action)
 
     page.show_dialog(snackbar)
     page.update()
