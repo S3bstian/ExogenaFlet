@@ -4,6 +4,7 @@ El vaciado previo por concepto en la misma transaccion usa
 ``hoja_trabajo_persistencia.delete_hoja_trabajo_por_id_concepto_cursor``.
 """
 import time
+import traceback
 from collections import defaultdict
 from dataclasses import dataclass, field
 from threading import Event
@@ -1100,6 +1101,24 @@ def _acumular_resultado_concepto(
     return resultado_concepto["identidades_unificadas"], insert_count
 
 
+def _codigo_concepto_en_proceso(concepto_en_proceso: Optional[Dict[str, Any]]) -> Any:
+    """Retorna código visible del concepto en proceso para mensajes de error crítico."""
+    if isinstance(concepto_en_proceso, dict):
+        return concepto_en_proceso.get("codigo", "N/A")
+    return "N/A"
+
+
+def _log_error_critico_acumulacion(
+    concepto_codigo: Any,
+    concepto_actual: int,
+    total_conceptos: int,
+    error: Exception,
+) -> None:
+    """Imprime el error crítico con contexto y stacktrace completo."""
+    print(f"[ERROR CRÍTICO] Concepto {concepto_codigo} ({concepto_actual}/{total_conceptos}): {error}")
+    print(traceback.format_exc())
+
+
 def _resultado_error_critico_acumulacion(
     error: Exception,
     conceptos: List[Dict[str, Any]],
@@ -1108,15 +1127,13 @@ def _resultado_error_critico_acumulacion(
     concepto_en_proceso: Optional[Dict[str, Any]],
 ) -> ResultadoAcumulacion:
     """Construye resultado y trazas para un error crítico durante acumulación."""
-    concepto_codigo_actual = (
-        concepto_en_proceso.get("codigo", "N/A")
-        if isinstance(concepto_en_proceso, dict)
-        else "N/A"
+    concepto_codigo_actual = _codigo_concepto_en_proceso(concepto_en_proceso)
+    _log_error_critico_acumulacion(
+        concepto_codigo=concepto_codigo_actual,
+        concepto_actual=concepto_actual,
+        total_conceptos=total_conceptos,
+        error=error,
     )
-    print(f"[ERROR CRÍTICO] Concepto {concepto_codigo_actual} ({concepto_actual}/{total_conceptos}): {error}")
-    import traceback
-
-    print(traceback.format_exc())
     return ResultadoAcumulacion(
         exito=False,
         total_conceptos_solicitados=len(conceptos),
