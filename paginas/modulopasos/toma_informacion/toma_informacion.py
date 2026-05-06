@@ -132,7 +132,22 @@ class TomaInformacionPage(ft.Column):
         """Construye la tabla paginada y carga conceptos (no altera la hoja de trabajo)."""
         self._page_prefix_buffer = ""
         self._banner_prefijos_sync()
-        self.search_field = ft.TextField(
+        self._inicializar_componentes_lista()
+        self.pagination_text_footer = build_pagination_label(1, 1)
+        self.nav_row = self._crear_nav_row()
+        tabla_container = self._crear_tabla_container()
+        self.main_container.content = self._crear_layout_lista(tabla_container)
+
+        self._load_conceptos()
+
+    def _inicializar_componentes_lista(self) -> None:
+        """Inicializa controles base de la pantalla de listado."""
+        self.search_field = self._crear_search_field()
+        self.data_table = self._crear_data_table()
+
+    def _crear_search_field(self) -> ft.TextField:
+        """Construye campo de búsqueda de conceptos para filtro incremental."""
+        return ft.TextField(
             label="Buscar Concepto, Formato, Descripcion",
             hint_text="Ej: 5002 - 1001 - Honorarios",
             prefix_icon=ft.Icons.MANAGE_SEARCH_SHARP,
@@ -142,8 +157,11 @@ class TomaInformacionPage(ft.Column):
             height=37,
             width=333,
         )
+
+    def _crear_data_table(self) -> ft.DataTable:
+        """Construye la tabla principal de conceptos para toma de información."""
         row_height = 35
-        self.data_table = ft.DataTable(
+        return ft.DataTable(
             columns=[
                 ft.DataColumn(ft.Text("Seleccionar", weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("Código Concepto", weight=ft.FontWeight.BOLD)),
@@ -157,8 +175,10 @@ class TomaInformacionPage(ft.Column):
             heading_row_color=PINK_50,
             divider_thickness=0.5,
         )
-        self.pagination_text_footer = build_pagination_label(1, 1)
-        self.nav_row = ft.Row(
+
+    def _crear_nav_row(self) -> ft.Row:
+        """Construye navegación inferior y acciones de selección/acumulación."""
+        return ft.Row(
             [
                 ft.OutlinedButton(
                     "Seleccionar todos",
@@ -191,14 +211,17 @@ class TomaInformacionPage(ft.Column):
                 ),
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-        )   
+        )
+
+    def _crear_tabla_container(self) -> ft.Container:
+        """Construye contenedor expandible de tabla con scroll vertical."""
         # Solo la tabla hace scroll; paginación y botones quedan fijos abajo.
         self.data_table_scroll = ft.Column(
             controls=[self.data_table],
             expand=True,
             scroll=ft.ScrollMode.AUTO,
         )
-        tabla_container = ft.Container(
+        return ft.Container(
             expand=True,
             alignment=ft.Alignment(0, 0),
             content=ft.Column(
@@ -208,7 +231,9 @@ class TomaInformacionPage(ft.Column):
             ),
         )
 
-        self.main_container.content = ft.Column(
+    def _crear_layout_lista(self, tabla_container: ft.Container) -> ft.Column:
+        """Arma layout de la vista de listado con header, loader, tabla y mensajes."""
+        return ft.Column(
             [
                 ft.Row(
                     [ft.Text("Toma de Información", size=20, weight=ft.FontWeight.BOLD), self.search_field],
@@ -221,8 +246,6 @@ class TomaInformacionPage(ft.Column):
             spacing=8,
         )
 
-        self._load_conceptos()
-
     # -------------------- CARGA Y RENDER --------------------
     def _load_conceptos(self, filtro=None):
         self._loader_trabajo()
@@ -233,13 +256,18 @@ class TomaInformacionPage(ft.Column):
                 limit=self.limit,
                 filtro=filtro,
             )
-            if not self.conceptos:
-                self.mensaje.value, self.mensaje.visible = "No se encontraron conceptos.", True
+            self._mostrar_mensaje_sin_resultados()
             self._renderizar_tabla()
         except Exception as e:
             self.mensaje.value, self.mensaje.visible = f"Error cargando conceptos: {e}", True
         finally:
             self._loader_fin()
+
+    def _mostrar_mensaje_sin_resultados(self) -> None:
+        """Muestra aviso estándar cuando la búsqueda no retorna conceptos."""
+        if self.conceptos:
+            return
+        self.mensaje.value, self.mensaje.visible = "No se encontraron conceptos.", True
 
     def _renderizar_tabla(self):
         self.data_table.rows.clear()
