@@ -255,6 +255,18 @@ class InformacionExogenaApp:
                 self.page.overlay.remove(ctn)
         self.page.update()
 
+    @staticmethod
+    def _resolver_contexto_ruta(
+        troute: ft.TemplateRoute,
+        res: Any,
+    ) -> tuple[str | None, Any, bool]:
+        """Deriva ruta, handler y bandera de transición desde el resultado del router."""
+        if not res:
+            return None, None, False
+        route, handler = res
+        es_transicion = not troute.match("/")
+        return route, handler, es_transicion
+
     def _actualizar_appbar_para_ruta(self, route_handler: Any) -> None:
         """Actualiza appbar según metadatos de la ruta activa."""
         height, appbar_content = get_appbar_content(route_handler.appbar, self)
@@ -283,13 +295,11 @@ class InformacionExogenaApp:
         troute = ft.TemplateRoute(self.page.route)
         update_topbar(troute, self)
         res = resolve_route(troute)
-        route: str | None = None
-        es_transicion = bool(res) and not troute.match("/")
-        if res:
-            route, h = res
+        route, handler, es_transicion = self._resolver_contexto_ruta(troute, res)
+        if handler:
             if es_transicion:
                 self._loader_overlay_mostrar(True)
-            self._actualizar_appbar_para_ruta(h)
+            self._actualizar_appbar_para_ruta(handler)
 
         self.page.run_task(self._build_and_navigate, troute, res, es_transicion, route)
 
@@ -312,11 +322,7 @@ class InformacionExogenaApp:
         """Construye la vista activa para la ruta y ejecuta `on_enter` cuando aplique."""
         try:
             await asyncio.sleep(0)
-            if troute.match("/") and self.page.views:
-                self.page.clean()
-
-            # Una vista por ruta: evita acumular ft.View y controles al navegar (patrón Flet).
-            self.page.views.clear()
+            self._reiniciar_vistas_para_ruta(troute)
 
             if not res:
                 asyncio.create_task(self.page.push_route("/"))
@@ -334,6 +340,13 @@ class InformacionExogenaApp:
                 self._loader_overlay_mostrar(False)
             self.page.update()
 
+    def _reiniciar_vistas_para_ruta(self, troute: ft.TemplateRoute) -> None:
+        """Reinicia stack de vistas antes de renderizar la ruta activa."""
+        if troute.match("/") and self.page.views:
+            self.page.clean()
+        # Una vista por ruta: evita acumular ft.View y controles al navegar (patrón Flet).
+        self.page.views.clear()
+
     def view_pop(self, e: ft.ViewPopEvent | None):
         """Atrás: subrutas /home/... vuelven a /home (sin depender de la pila de vistas)."""
         destino = parent_route_for_back(self.page.route)
@@ -346,21 +359,21 @@ def main(page: ft.Page):
     """Configura la ventana principal y dispara el flujo inicial de la app."""
     _configurar_pagina_principal(page)
 
-    msg = ft.Text("", color=ft.Colors.GREY_600, visible=False)
-    page.add(msg)
+    mensaje_arranque = ft.Text("", color=ft.Colors.GREY_600, visible=False)
+    page.add(mensaje_arranque)
     page.update()  # Aplica full_screen y demás propiedades de ventana
     app = InformacionExogenaApp(page)
 
     def _continuar_arranque() -> None:
         """Tras condiciones + activación (si aplica): valida catálogos y pinta la ruta inicial."""
-        _mostrar_mensaje_arranque(page, msg, "🔄 Validando bases de datos...")
+        _mostrar_mensaje_arranque(page, mensaje_arranque, "🔄 Validando bases de datos...")
         time.sleep(0.5)
 
         result = app.container.cargar_catalogos_uc.ejecutar()
-        _mostrar_mensaje_arranque(page, msg, result)
+        _mostrar_mensaje_arranque(page, mensaje_arranque, result)
         time.sleep(0.8 if result.startswith("✅") else 300)
 
-        msg.visible = False
+        mensaje_arranque.visible = False
         page.update()
         page.route = "/"
         app.route_change(None)
