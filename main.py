@@ -61,6 +61,18 @@ def _mostrar_mensaje_arranque(page: ft.Page, mensaje: ft.Text, texto: str) -> No
     page.update()
 
 
+def _ocultar_mensaje_arranque(page: ft.Page, mensaje: ft.Text) -> None:
+    """Oculta mensaje de arranque una vez finaliza la inicialización."""
+    mensaje.visible = False
+    page.update()
+
+
+def _finalizar_arranque_en_ruta_inicial(page: ft.Page, app: "InformacionExogenaApp") -> None:
+    """Define la ruta inicial y dispara renderizado de la primera vista."""
+    page.route = "/"
+    app.route_change(None)
+
+
 class InformacionExogenaApp:
     def __init__(self, page: ft.Page):
         """Inicializa página, contenedor de casos de uso y handlers de navegación."""
@@ -189,16 +201,31 @@ class InformacionExogenaApp:
 
     def _procesar_login(self, usuario: ft.TextField, password: ft.TextField) -> None:
         """Valida y autentica credenciales; navega a `/home` en caso exitoso."""
-        if self._credenciales_vacias(usuario, password):
-            self.page.update()
+        if not self._credenciales_validas(usuario, password):
             return
 
         val_usuario = self._autenticar_credenciales(usuario, password)
-        if not val_usuario:
-            self._mostrar_error_credenciales(usuario, password)
-            self.page.update()
+        if not self._autenticacion_exitosa(usuario, password, val_usuario):
             return
+        self._completar_login_exitoso(val_usuario)
 
+    def _credenciales_validas(self, usuario: ft.TextField, password: ft.TextField) -> bool:
+        """Valida campos requeridos antes de intentar autenticación."""
+        if not self._credenciales_vacias(usuario, password):
+            return True
+        self.page.update()
+        return False
+
+    def _autenticacion_exitosa(self, usuario: ft.TextField, password: ft.TextField, val_usuario) -> bool:
+        """Muestra feedback cuando falla autenticación y retorna estado final."""
+        if val_usuario:
+            return True
+        self._mostrar_error_credenciales(usuario, password)
+        self.page.update()
+        return False
+
+    def _completar_login_exitoso(self, val_usuario) -> None:
+        """Actualiza sesión y navega al home después de autenticar exitosamente."""
         session.USUARIO_ACTUAL = {"id": val_usuario[0], "nombre": val_usuario[1], "email": ""}
         self.page.pop_dialog()  # Flet 0.80: reemplaza dialog.open = False
         self.page.update()
@@ -373,10 +400,8 @@ def main(page: ft.Page):
         _mostrar_mensaje_arranque(page, mensaje_arranque, result)
         time.sleep(0.8 if result.startswith("✅") else 300)
 
-        mensaje_arranque.visible = False
-        page.update()
-        page.route = "/"
-        app.route_change(None)
+        _ocultar_mensaje_arranque(page, mensaje_arranque)
+        _finalizar_arranque_en_ruta_inicial(page, app)
 
     ejecutar_si_corresponde(page, app, _continuar_arranque)
 
