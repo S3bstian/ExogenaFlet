@@ -86,18 +86,38 @@ class InformacionExogenaApp:
             bgcolor=FONDO_PAGINA,
             alignment=ft.Alignment(0, -1),
         )
-        self.login_button = ft.TextButton(content="Iniciar Sesión", on_click=self.login, icon=ft.Icons.SUPERVISED_USER_CIRCLE_OUTLINED, style=BOTON_PRINCIPAL, visible=False)
+        self.login_button = self._crear_boton_login()
         self.logo_helisa = ft.Image(
             src=IMG_PATH + "/helisa.png",
             width=600,
             height=310,
             fit=ft.BoxFit.CONTAIN,
         )
-        self.backbutton = ft.OutlinedButton("Atras", icon=ft.Icons.ARROW_BACK_IOS_NEW_SHARP, icon_color=PINK_600, style=BOTON_SECUNDARIO,
-                                            visible=False, on_click=self.view_pop)
+        self.backbutton = self._crear_boton_atras()
         self.loader_overlay = crear_loader_row("Cargando...", size=SIZE_SMALL)
         # Mismo control en cada reconstrucción del appbar (Ctrl+dígitos en hoja / cartilla).
         self._outer_banner_prefijo_appbar, self._txt_banner_prefijo_appbar = crear_banner_prefijo_ctrl(expand=False)
+
+    def _crear_boton_login(self) -> ft.TextButton:
+        """Construye botón de login con estilo y visibilidad inicial estándar."""
+        return ft.TextButton(
+            content="Iniciar Sesión",
+            on_click=self.login,
+            icon=ft.Icons.SUPERVISED_USER_CIRCLE_OUTLINED,
+            style=BOTON_PRINCIPAL,
+            visible=False,
+        )
+
+    def _crear_boton_atras(self) -> ft.OutlinedButton:
+        """Construye botón de retorno usado en subrutas."""
+        return ft.OutlinedButton(
+            "Atras",
+            icon=ft.Icons.ARROW_BACK_IOS_NEW_SHARP,
+            icon_color=PINK_600,
+            style=BOTON_SECUNDARIO,
+            visible=False,
+            on_click=self.view_pop,
+        )
 
     def _crear_appbar_base(self) -> None:
         """Construye el appbar inicial antes de reconfigurarlo por ruta."""
