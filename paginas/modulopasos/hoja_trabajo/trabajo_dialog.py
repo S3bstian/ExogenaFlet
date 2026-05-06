@@ -1374,32 +1374,46 @@ class TrabajoDialog:
             raw = self._datos_uc.obtener_tabla_padre_para_catalogo_dependiente(key)
         except Exception:
             raw = None
-        resolved: str | None = None
-        if raw:
-            rp = str(raw).strip()
-            if rp in self.datos:
-                resolved = rp
-            else:
-                rl = rp.lower()
-                for k in self.datos:
-                    if k.lower() == rl:
-                        resolved = k
-                        break
+        resolved = self._resolver_clave_datos_case_insensitive(raw)
         self._cache_padre_catalogo[key] = resolved
         return resolved
 
+    def _resolver_clave_datos_case_insensitive(self, raw_key: object) -> str | None:
+        """Resuelve una clave de `self.datos` tolerando variaciones de mayúsculas/minúsculas."""
+        if not raw_key:
+            return None
+        key_texto = str(raw_key).strip()
+        if not key_texto:
+            return None
+        if key_texto in self.datos:
+            return key_texto
+        key_lower = key_texto.lower()
+        for clave in self.datos:
+            if clave.lower() == key_lower:
+                return clave
+        return None
+
+    def _dropdown_options_desde_catalogo(self, opciones: list[dict]) -> list[ft.DropdownOption]:
+        """Mapea opciones crudas de datos específicos a `DropdownOption`."""
+        return [
+            ft.DropdownOption(
+                key=str(opcion["codigo"]),
+                text=(opcion["descripcion"] or str(opcion["codigo"])).strip(),
+            )
+            for opcion in opciones
+        ]
+
+    def _opciones_catalogo_por_attr(self, attr: str, parent_attr: str | None = None, parent_valor: str | None = None) -> list[dict]:
+        """Obtiene opciones de catálogo para un atributo, con o sin dependencia de padre."""
+        tabla = (attr or "").strip()
+        return self._opciones_dropdown_catalogo(tabla, parent_attr, parent_valor)
+
     def _dropdown_datos_especificos(self, attr: str) -> DropdownCompact:
         # TABLA en DATOSESPECIFICOS = ATRIBUTOS.DESCRIPCION (la etiqueta `attr`).
-        tb = (attr or "").strip()
-        p = self._padre_catalogo_dependiente(attr)
-        if p:
-            opciones = self._datos_uc.obtener_opciones_datos_especificos(tb, p, self.datos.get(p, "")) if tb else []
-        else:
-            opciones = self._datos_uc.obtener_opciones_datos_especificos(tb) if tb else []
-        opts = [
-            ft.DropdownOption(key=str(o["codigo"]), text=(o["descripcion"] or str(o["codigo"])).strip())
-            for o in opciones
-        ]
+        parent_attr = self._padre_catalogo_dependiente(attr)
+        parent_valor = self.datos.get(parent_attr, "") if parent_attr else None
+        opciones = self._opciones_catalogo_por_attr(attr, parent_attr, parent_valor)
+        opts = self._dropdown_options_desde_catalogo(opciones)
         v = str(self.datos.get(attr, "") or "").strip() or None
         de_lbl = str(attr or "").strip()
         return DropdownCompact(
@@ -1450,13 +1464,8 @@ class TrabajoDialog:
         if not p or not parent_ctrl or not child_ctrl:
             return
         pv = self._key_from_label(parent_ctrl.value) if parent_ctrl.value else None
-        tb = (attr or "").strip()
-        opciones = self._opciones_dropdown_catalogo(tb, p, pv)
-
-        child_ctrl.options = [
-            ft.DropdownOption(key=str(o["codigo"]), text=(o["descripcion"] or str(o["codigo"])).strip())
-            for o in opciones
-        ]
+        opciones = self._opciones_catalogo_por_attr(attr, p, pv)
+        child_ctrl.options = self._dropdown_options_desde_catalogo(opciones)
         if limpiar_seleccion_hijo:
             child_ctrl.value = None
         else:
@@ -1946,10 +1955,7 @@ class TrabajoDialog:
         Abre el catálogo de terceros para seleccionar uno.
         Solo se muestra y usa en modo 'nuevo'.
         """
-        self.dialog_trabajo_guardado = self.dialog
-        if self.dialog:
-            self.page.pop_dialog()
-            self.page.update()
+        self._cerrar_dialogo_actual_para_hijo()
         self.tercero_dialog.open_agregar_dialog()
     
     def _abrir_dialogo_editar_tercero(self):
@@ -1958,11 +1964,16 @@ class TrabajoDialog:
         Solo está disponible en modo 'editar' cuando hay un tercero cargado.
         """
         tercero = self.tercero_actual.copy()
-        self.dialog_trabajo_guardado = self.dialog
-        if self.dialog:
-            self.page.pop_dialog()
-            self.page.update()
+        self._cerrar_dialogo_actual_para_hijo()
         self.tercero_dialog_editar.abrir(tercero=tercero, origen="editar")
+
+    def _cerrar_dialogo_actual_para_hijo(self) -> None:
+        """Guarda referencia y cierra el diálogo actual antes de abrir uno hijo."""
+        self.dialog_trabajo_guardado = self.dialog
+        if not self.dialog:
+            return
+        self.page.pop_dialog()
+        self.page.update()
 
     def _valor_desde_control_grid(self, attr: str, ctrl) -> object:
         """Interpreta `value` del control del grid según etiqueta/key o atributo monetario."""
