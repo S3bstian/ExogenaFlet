@@ -1123,6 +1123,45 @@ def _estado_inicial_acumulacion() -> Dict[str, Any]:
     }
 
 
+def _procesar_conceptos_en_lote(
+    cur: Any,
+    conceptos: List[Dict[str, Any]],
+    total_conceptos: int,
+    setsdatos: List[Tuple[Any, ...]],
+    estado: Dict[str, Any],
+    log_max_sets_detalle: int,
+    log_max_inserts_detalle: int,
+    en_ui: Any,
+    raise_if_cancel: Any,
+) -> Tuple[int, Optional[Dict[str, Any]]]:
+    """Procesa todos los conceptos y acumula métricas globales de la ejecución."""
+    concepto_en_proceso: Optional[Dict[str, Any]] = None
+    for concepto_actual, concepto in enumerate(conceptos, start=1):
+        concepto_en_proceso = concepto
+        resultado_concepto = _procesar_concepto_acumulacion(
+            cur=cur,
+            concepto=concepto,
+            concepto_actual=concepto_actual,
+            total_conceptos=total_conceptos,
+            setsdatos=setsdatos,
+            advertencias_sin_datos_map=estado["advertencias_sin_datos_map"],
+            total_errores=estado["total_errores"],
+            log_max_sets_detalle=log_max_sets_detalle,
+            log_max_inserts_detalle=log_max_inserts_detalle,
+            en_ui=en_ui,
+            raise_if_cancel=raise_if_cancel,
+        )
+        identidades_unificadas, insert_count = _acumular_resultado_concepto(
+            resultado_concepto=resultado_concepto,
+            conceptos_omitidos_sin_elemento=estado["conceptos_omitidos_sin_elemento"],
+            conceptos_sin_cuentas_en_config=estado["conceptos_sin_cuentas_en_config"],
+            conceptos_sin_filas_en_hoja=estado["conceptos_sin_filas_en_hoja"],
+        )
+        estado["identidades_unificadas_global"] += identidades_unificadas
+        estado["total_inserts"] += insert_count
+    return len(conceptos), concepto_en_proceso
+
+
 def acumular_conceptos_hoja_trabajo(
     conceptos: List[Dict[str, Any]],
     loader: Any,
@@ -1218,33 +1257,17 @@ def acumular_conceptos_hoja_trabajo(
                     raise_if_cancel=_raise_if_cancel,
                     en_ui=en_ui,
                 )
-
-                # --------------------------- LOOP PRINCIPAL ---------------------------
-                for concepto in conceptos:
-                    concepto_en_proceso = concepto
-                    concepto_actual += 1
-                    resultado_concepto = _procesar_concepto_acumulacion(
-                        cur=cur,
-                        concepto=concepto,
-                        concepto_actual=concepto_actual,
-                        total_conceptos=total_conceptos,
-                        setsdatos=setsdatos,
-                        advertencias_sin_datos_map=advertencias_sin_datos_map,
-                        total_errores=total_errores,
-                        log_max_sets_detalle=LOG_MAX_SETS_DETALLE,
-                        log_max_inserts_detalle=LOG_MAX_INSERTS_DETALLE,
-                        en_ui=en_ui,
-                        raise_if_cancel=_raise_if_cancel,
-                    )
-
-                    identidades_unificadas, insert_count = _acumular_resultado_concepto(
-                        resultado_concepto=resultado_concepto,
-                        conceptos_omitidos_sin_elemento=conceptos_omitidos_sin_elemento,
-                        conceptos_sin_cuentas_en_config=conceptos_sin_cuentas_en_config,
-                        conceptos_sin_filas_en_hoja=conceptos_sin_filas_en_hoja,
-                    )
-                    estado["identidades_unificadas_global"] += identidades_unificadas
-                    estado["total_inserts"] += insert_count
+                concepto_actual, concepto_en_proceso = _procesar_conceptos_en_lote(
+                    cur=cur,
+                    conceptos=conceptos,
+                    total_conceptos=total_conceptos,
+                    setsdatos=setsdatos,
+                    estado=estado,
+                    log_max_sets_detalle=LOG_MAX_SETS_DETALLE,
+                    log_max_inserts_detalle=LOG_MAX_INSERTS_DETALLE,
+                    en_ui=en_ui,
+                    raise_if_cancel=_raise_if_cancel,
+                )
 
                 # ==================== RESUMEN FINAL ====================
                 _imprimir_resumen_final_acumulacion(
