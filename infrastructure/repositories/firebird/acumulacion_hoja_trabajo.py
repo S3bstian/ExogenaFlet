@@ -922,6 +922,56 @@ def _resultado_concepto_sin_elemento(concepto_codigo: Any) -> Dict[str, Any]:
     }
 
 
+def _metadatos_concepto(concepto: Dict[str, Any]) -> Tuple[Any, Any]:
+    """Retorna código y formato de concepto con fallback estable para logs."""
+    return concepto.get("codigo", "N/A"), concepto.get("formato", "N/A")
+
+
+def _obtener_elemento_valido_con_log(cur: Any, concepto: Dict[str, Any], concepto_codigo: Any) -> Optional[Tuple[Any, ...]]:
+    """Busca el elemento del concepto e imprime contexto de proceso cuando existe."""
+    try:
+        elemento = _obtener_elemento_concepto(cur, concepto.get("id"))
+    except Exception as error:
+        print(f"[ERROR] Concepto {concepto_codigo}: {error}")
+        raise
+
+    if not elemento:
+        print(f"[WARNING] Concepto {concepto_codigo} omitido: no tiene elemento válido")
+        return None
+    return elemento
+
+
+def _imprimir_contexto_concepto(
+    concepto_codigo: Any,
+    concepto_formato: Any,
+    elemento_id: Any,
+    tipo_elemento: str,
+) -> None:
+    """Imprime contexto estándar del concepto actual para diagnóstico."""
+    print(
+        f"[ACUMULACIÓN] Concepto {concepto_codigo} | Formato {concepto_formato} "
+        f"| Elemento id={elemento_id} tipo={tipo_elemento}"
+    )
+
+
+def _obtener_atributos_con_log(cur: Any, elemento_id: Any, concepto_codigo: Any) -> List[Tuple[Any, ...]]:
+    """Carga atributos del elemento y agrega trazas homogéneas de error/salida."""
+    try:
+        atributos = _obtener_atributos_elemento(cur, elemento_id)
+    except Exception as error:
+        print(f"[ERROR] Obteniendo atributos para concepto {concepto_codigo}: {error}")
+        raise
+    print(f"[ACUMULACIÓN]   Atributos ({len(atributos)}): {atributos}")
+    return atributos
+
+
+def _concepto_tiene_cuentas_configuradas(tipo_el: str, atributos: List[Tuple[Any, ...]]) -> bool:
+    """Valida si un concepto T/C tiene al menos una cuenta contable/tributaria usable."""
+    if tipo_el not in ("T", "C"):
+        return True
+    return any(attr[2] in (1, 2) and _codigo_cuenta_no_vacio(attr[4]) for attr in atributos)
+
+
 def _procesar_concepto_acumulacion(
     cur: Any,
     concepto: Dict[str, Any],
@@ -940,39 +990,24 @@ def _procesar_concepto_acumulacion(
     en_ui(texto=_texto_progreso_concepto(concepto_actual, total_conceptos))
 
     setsdatos.clear()
-    concepto_codigo = concepto.get("codigo", "N/A")
-    concepto_formato = concepto.get("formato", "N/A")
+    concepto_codigo, concepto_formato = _metadatos_concepto(concepto)
+    elemento = _obtener_elemento_valido_con_log(cur, concepto, concepto_codigo)
+    if not elemento:
+        return _resultado_concepto_sin_elemento(concepto_codigo)
 
-    try:
-        elemento = _obtener_elemento_concepto(cur, concepto.get("id"))
-        if not elemento:
-            print(f"[WARNING] Concepto {concepto_codigo} omitido: no tiene elemento válido")
-            return _resultado_concepto_sin_elemento(concepto_codigo)
-        tipo_el = _normalizar_tipo_elemento(elemento[1])
-        print(
-            f"[ACUMULACIÓN] Concepto {concepto_codigo} | Formato {concepto_formato} "
-            f"| Elemento id={elemento[0]} tipo={tipo_el}"
-        )
-    except Exception as e:
-        print(f"[ERROR] Concepto {concepto_codigo}: {e}")
-        raise
+    tipo_el = _normalizar_tipo_elemento(elemento[1])
+    _imprimir_contexto_concepto(
+        concepto_codigo=concepto_codigo,
+        concepto_formato=concepto_formato,
+        elemento_id=elemento[0],
+        tipo_elemento=tipo_el,
+    )
 
     _checkpoint_concepto(en_ui, raise_if_cancel, 0.11)
-
-    try:
-        atributos = _obtener_atributos_elemento(cur, elemento[0])
-    except Exception as e:
-        print(f"[ERROR] Obteniendo atributos para concepto {concepto_codigo}: {e}")
-        raise
-
-    print(f"[ACUMULACIÓN]   Atributos ({len(atributos)}): {atributos}")
+    atributos = _obtener_atributos_con_log(cur, elemento[0], concepto_codigo)
     _checkpoint_concepto(en_ui, raise_if_cancel, 0.22)
 
-    sin_cuentas_config = False
-    if tipo_el in ("T", "C") and not any(
-        attr[2] in (1, 2) and _codigo_cuenta_no_vacio(attr[4]) for attr in atributos
-    ):
-        sin_cuentas_config = True
+    sin_cuentas_config = not _concepto_tiene_cuentas_configuradas(tipo_el, atributos)
 
     total_registros_antes_unificar, identidades_unicas_antes = _construir_sets_por_atributos(
         cur=cur,
