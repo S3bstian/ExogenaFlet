@@ -120,7 +120,21 @@ class HojaTrabajoPage(ft.Column):
         self.loader_dialogo_trabajo = crear_loader_row("Abriendo formulario...", size=SIZE_SMALL)
         self.loader_dialogo_trabajo.visible = False
         self.pagination_text_footer = build_pagination_label(1, 1)
-        self.nav_row = ft.Row(
+        self.nav_row = self._crear_nav_row()
+
+        # Fila de herramientas (se reconstruye en `_actualizar_herramientas`).
+        self.herramientas_row = self._crear_herramientas_row()
+        self._actualizar_herramientas()
+        self._crear_panel_herramientas()
+        self._crear_tabla_principal()
+        self.content = self._crear_contenido_principal()
+
+    def view(self):
+        return self.content
+
+    def _crear_nav_row(self) -> ft.Row:
+        """Construye navegación inferior de paginación (anterior/siguiente)."""
+        return ft.Row(
             [
                 ft.ElevatedButton(
                     "Anterior",
@@ -146,17 +160,18 @@ class HojaTrabajoPage(ft.Column):
             ],
             alignment=ft.MainAxisAlignment.CENTER,
         )
-        
-        # Fila de herramientas (se reconstruye en `_actualizar_herramientas`)
-        self.herramientas_row = ft.Row(
+
+    def _crear_herramientas_row(self) -> ft.Row:
+        """Construye fila horizontal desplazable para botones de herramientas."""
+        return ft.Row(
             controls=[],
             spacing=3,
             expand=False,
-            scroll=ft.ScrollMode.AUTO
+            scroll=ft.ScrollMode.AUTO,
         )
-        
-        # Función para actualizar herramientas según el concepto
-        self._actualizar_herramientas()
+
+    def _crear_panel_herramientas(self) -> None:
+        """Inicializa contenedor, botón toggle y panel de herramientas."""
         self.herramientas_container = ft.Container(
             content=self.herramientas_row,
             width=0,
@@ -170,19 +185,19 @@ class HojaTrabajoPage(ft.Column):
             icon_color=PINK_600,
             style=BOTON_SECUNDARIO_SIN,
             tooltip="Desplegar herramientas",
-            on_click=self.toggle_herramientas
+            on_click=self.toggle_herramientas,
         )
         self.panel_herramientas = ft.Container(
             content=ft.Row(
-                [
-                    self.boton_toggle,
-                    self.herramientas_container
-                ],
+                [self.boton_toggle, self.herramientas_container],
                 alignment=ft.MainAxisAlignment.END,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
             )
         )
-        # Tabla DataTable2: encabezado fijo; Acciones e Identidad fijas (fixed_left_columns=2)
+
+    def _crear_tabla_principal(self) -> None:
+        """Inicializa tabla y contenedor visual de la hoja de trabajo."""
+        # Tabla DataTable2: encabezado fijo; Acciones e Identidad fijas (fixed_left_columns=2).
         self.table = fdt.DataTable2(
             columns=[fdt.DataColumn2(label=ft.Text("..."))],
             rows=[],
@@ -198,7 +213,7 @@ class HojaTrabajoPage(ft.Column):
             expand=True,
             bgcolor=WHITE,
         )
-        # Solo la tabla lleva borde/blanco: el slot exterior es transparente para ver el fondo si hay pocas filas.
+        # Solo la tabla lleva borde/blanco: el slot exterior es transparente con pocas filas.
         self.table_shell = ft.Container(
             content=self.table,
             bgcolor=WHITE,
@@ -214,7 +229,10 @@ class HojaTrabajoPage(ft.Column):
             ),
             expand=True,
         )
-        header = ft.Row(
+
+    def _crear_header_principal(self) -> ft.Row:
+        """Construye encabezado superior con título, filtros y panel de herramientas."""
+        return ft.Row(
             [
                 ft.Text("Hoja de Trabajo", size=18, weight=ft.FontWeight.BOLD),
                 self.dropdown_conceptos,
@@ -225,22 +243,22 @@ class HojaTrabajoPage(ft.Column):
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             height=45,
         )
-        self.content = ft.Column(
+
+    def _crear_contenido_principal(self) -> ft.Column:
+        """Arma el layout principal de la vista de hoja de trabajo."""
+        return ft.Column(
             [
-                header,
+                self._crear_header_principal(),
                 self.loader,
                 self.loader_herramientas,
                 self.loader_dialogo_trabajo,
                 self.table_container,
-                self.nav_row
+                self.nav_row,
             ],
             spacing=8,
             expand=True,
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         )
-
-    def view(self):
-        return self.content
 
     # --- Carga de datos ---
     def cargar_datos(self):
