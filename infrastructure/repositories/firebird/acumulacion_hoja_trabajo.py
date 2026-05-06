@@ -7,7 +7,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from threading import Event
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from infrastructure.persistence.firebird.hoja_trabajo_persistencia import (
     TABLAS_CUENTAS_PERMITIDAS,
@@ -1167,6 +1167,63 @@ def _procesar_conceptos_en_lote(
     return len(conceptos), concepto_en_proceso
 
 
+def _ejecutar_acumulacion_en_transaccion(
+    cur: Any,
+    conceptos: List[Dict[str, Any]],
+    total_conceptos: int,
+    log_max_sets_detalle: int,
+    log_max_inserts_detalle: int,
+    en_ui: Callable[..., None],
+    raise_if_cancel: Callable[[], None],
+) -> Tuple[EstadoAcumulacion, int, Optional[Dict[str, Any]]]:
+    """Ejecuta limpieza, procesamiento y consolidación dentro de una transacción activa."""
+    setsdatos: List[Tuple[Any, ...]] = []
+    estado = _estado_inicial_acumulacion()
+
+    _limpiar_hoja_por_conceptos_en_transaccion(
+        cur=cur,
+        conceptos=conceptos,
+        total_conceptos=total_conceptos,
+        raise_if_cancel=raise_if_cancel,
+        en_ui=en_ui,
+    )
+    concepto_actual, concepto_en_proceso = _procesar_conceptos_en_lote(
+        cur=cur,
+        conceptos=conceptos,
+        total_conceptos=total_conceptos,
+        setsdatos=setsdatos,
+        estado=estado,
+        log_max_sets_detalle=log_max_sets_detalle,
+        log_max_inserts_detalle=log_max_inserts_detalle,
+        en_ui=en_ui,
+        raise_if_cancel=raise_if_cancel,
+    )
+    return estado, concepto_actual, concepto_en_proceso
+
+
+def _construir_resultado_final_exitoso(
+    conceptos: List[Dict[str, Any]],
+    total_conceptos: int,
+    estado: EstadoAcumulacion,
+) -> ResultadoAcumulacion:
+    """Imprime resumen final y devuelve DTO de éxito total/parcial."""
+    _imprimir_resumen_final_acumulacion(
+        total_conceptos=total_conceptos,
+        total_inserts=estado.total_inserts,
+        identidades_unificadas_global=estado.identidades_unificadas_global,
+        total_errores=estado.total_errores,
+    )
+    return _construir_resultado_exito(
+        conceptos=conceptos,
+        total_inserts=estado.total_inserts,
+        total_errores=estado.total_errores,
+        conceptos_omitidos_sin_elemento=estado.conceptos_omitidos_sin_elemento,
+        conceptos_sin_cuentas_en_config=estado.conceptos_sin_cuentas_en_config,
+        conceptos_sin_filas_en_hoja=estado.conceptos_sin_filas_en_hoja,
+        advertencias_sin_datos_map=estado.advertencias_sin_datos_map,
+    )
+
+
 def acumular_conceptos_hoja_trabajo(
     conceptos: List[Dict[str, Any]],
     loader: Any,
@@ -1245,45 +1302,19 @@ def acumular_conceptos_hoja_trabajo(
         # Envolver todo en una transacción única
         try:
             with transaccion_segura() as (con, cur):
-                setsdatos = []
-                estado = _estado_inicial_acumulacion()
-
-                # Vacía HOJA_TRABAJO por concepto en esta misma transacción; al cancelar o fallar,
-                # el rollback restaura también lo borrado aquí.
-                _limpiar_hoja_por_conceptos_en_transaccion(
+                estado, concepto_actual, concepto_en_proceso = _ejecutar_acumulacion_en_transaccion(
                     cur=cur,
                     conceptos=conceptos,
                     total_conceptos=total_conceptos,
-                    raise_if_cancel=_raise_if_cancel,
-                    en_ui=en_ui,
-                )
-                concepto_actual, concepto_en_proceso = _procesar_conceptos_en_lote(
-                    cur=cur,
-                    conceptos=conceptos,
-                    total_conceptos=total_conceptos,
-                    setsdatos=setsdatos,
-                    estado=estado,
                     log_max_sets_detalle=LOG_MAX_SETS_DETALLE,
                     log_max_inserts_detalle=LOG_MAX_INSERTS_DETALLE,
                     en_ui=en_ui,
                     raise_if_cancel=_raise_if_cancel,
                 )
-
-                # ==================== RESUMEN FINAL ====================
-                _imprimir_resumen_final_acumulacion(
-                    total_conceptos=total_conceptos,
-                    total_inserts=estado.total_inserts,
-                    identidades_unificadas_global=estado.identidades_unificadas_global,
-                    total_errores=estado.total_errores,
-                )
-                return _construir_resultado_exito(
+                return _construir_resultado_final_exitoso(
                     conceptos=conceptos,
-                    total_inserts=estado.total_inserts,
-                    total_errores=estado.total_errores,
-                    conceptos_omitidos_sin_elemento=estado.conceptos_omitidos_sin_elemento,
-                    conceptos_sin_cuentas_en_config=estado.conceptos_sin_cuentas_en_config,
-                    conceptos_sin_filas_en_hoja=estado.conceptos_sin_filas_en_hoja,
-                    advertencias_sin_datos_map=estado.advertencias_sin_datos_map,
+                    total_conceptos=total_conceptos,
+                    estado=estado,
                 )
         except RuntimeError as e:
             if str(e) == _ACUMULAR_CANCEL_MSG:
