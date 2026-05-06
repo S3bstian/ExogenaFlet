@@ -11,6 +11,53 @@ from paginas.modulopasos.copias.copias import CopiasDialog
 from utils.ui_sync import loader_row_fin, loader_row_visibilidad
 
 
+# Tablero principal (tiles de navegación)
+_CELL_HOME_TAM = 150
+_GAP_HOME_NAV = 10
+_COLORES_TILES_NAV = ("#66A357", "#8B7284", "#D5CA70", "#525D79", "#4F8F92", "#812C5A")
+
+
+def _container_baldosa_nav(
+    bgcolor: str,
+    icon,
+    label: str,
+    w: float,
+    h: float,
+    left: float,
+    top: float,
+    on_click,
+) -> ft.Container:
+    """Tile focuseable (Tab); mismo layout visual que el home original."""
+    return ft.Container(
+        content=ft.ElevatedButton(
+            content=ft.Column(
+                [
+                    ft.Icon(icon, size=40, color="white"),
+                    ft.Text(label, size=14, weight="bold", color="white"),
+                ],
+                alignment=ft.MainAxisAlignment.CENTER,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                expand=True,
+            ),
+            width=w,
+            height=h,
+            style=ft.ButtonStyle(
+                bgcolor=bgcolor,
+                color="white",
+                elevation=0,
+                padding=0,
+                shape=ft.RoundedRectangleBorder(radius=0),
+                overlay_color=ft.Colors.with_opacity(0.15, "white"),
+            ),
+            on_click=on_click,
+        ),
+        left=left,
+        top=top,
+        width=w,
+        height=h,
+    )
+
+
 class HomePage(ft.Column):
     def __init__(self, page: ft.Page, app=None):
         super().__init__()
@@ -48,28 +95,58 @@ class HomePage(ft.Column):
         if self.empresas_PH:
             self.productos_disponibles.append("PH")
 
-    def construir_empresas_column(self, productos_seleccionados):
-        productos = set(productos_seleccionados or [])
+    def _empresas_filtradas_licenciadas(self, productos: set) -> list[tuple[str, dict]]:
+        """Empresas (producto, registro) con licencia activa para cada producto en `productos`."""
         licencia = self._licenciamiento_uc.obtener_licencia()
-        empresas = []
+        empresas: list[tuple[str, dict]] = []
         if "NI" in productos:
             empresas.extend(
-                [
-                    ("NI", e)
-                    for e in self.empresas_NI
-                    if licencia and licencia.empresa_activada("NI", int(e["codigo"]))
-                ]
+                ("NI", e)
+                for e in self.empresas_NI
+                if licencia and licencia.empresa_activada("NI", int(e["codigo"]))
             )
         if "PH" in productos:
             empresas.extend(
-                [
-                    ("PH", e)
-                    for e in self.empresas_PH
-                    if licencia and licencia.empresa_activada("PH", int(e["codigo"]))
-                ]
+                ("PH", e)
+                for e in self.empresas_PH
+                if licencia and licencia.empresa_activada("PH", int(e["codigo"]))
             )
-            
-        # construir nuevos controles (cada llamada crea nuevos objetos, por eso reseteamos submenus)
+        return empresas
+
+    def _restaurar_estilo_otros_submenus(self, submenu_abierto):
+        """Cierra otros submenús y devuelve el estilo estándar a sus botones."""
+        for _nombre_e, sub in list(self.submenus.items()):
+            if sub != submenu_abierto:
+                sub.visible = False
+                parent = sub.parent
+                fila_anterior = parent.controls[0]
+                boton_ant = fila_anterior.controls[0]
+                boton_ant.icon = None
+                boton_ant.icon_color = None
+                boton_ant.style = BOTON_LISTA
+                parent.update()
+
+    def _marcar_expandir_menu_por_session(self):
+        """Si hay empresa en sesión, abre visualmente el submenú que coincide por nombre."""
+        if not session.EMPRESA_ACTUAL:
+            return
+        nombre_session = session.EMPRESA_ACTUAL["nombre"]
+        for ctrl in self.empresas_column.controls:
+            fila = ctrl.controls[0]
+            boton = fila.controls[0]
+            submenu = ctrl.controls[1]
+            if boton.content == nombre_session:
+                submenu.visible = True
+                boton.icon = ft.Icons.SUBDIRECTORY_ARROW_RIGHT_SHARP
+                boton.icon_color = PINK_200
+                boton.style = ft.ButtonStyle(bgcolor=PINK_50, color=BLACK)
+                self._selected_button = boton
+                break
+
+    def construir_empresas_column(self, productos_seleccionados):
+        productos = set(productos_seleccionados or ())
+        empresas = self._empresas_filtradas_licenciadas(productos)
+
         self.submenus.clear()
         self.empresas_column.controls = [
             self.empresa_menu(
@@ -80,20 +157,24 @@ class HomePage(ft.Column):
             )
             for producto, emp in empresas
         ]
-        if session.EMPRESA_ACTUAL:
-            for ctrl in self.empresas_column.controls:
-                fila = ctrl.controls[0]       
-                boton = fila.controls[0]      
-                submenu = ctrl.controls[1]
-                if boton.content == session.EMPRESA_ACTUAL["nombre"]:
-                    submenu.visible = True
-                    boton.icon = ft.Icons.SUBDIRECTORY_ARROW_RIGHT_SHARP
-                    boton.icon_color = PINK_200
-                    boton.style = ft.ButtonStyle(bgcolor=PINK_50, color=BLACK)
-                    self._selected_button = boton
-                    break
+        self._marcar_expandir_menu_por_session()
         if self.empresas_column.page:
             self.empresas_column.update()
+
+    def _construir_segmented_productos(self, seleccion_inicial: str) -> ft.SegmentedButton:
+        return ft.SegmentedButton(
+            allow_multiple_selection=False,
+            allow_empty_selection=False,
+            selected=[seleccion_inicial],
+            segments=[
+                ft.Segment(value="NI", label=ft.Text("Norma Internacional")),
+                ft.Segment(value="PH", label=ft.Text("Propiedad Horizontal")),
+            ],
+            on_change=lambda e: self.construir_empresas_column(
+                [next(iter(e.control.selected))] if e.control.selected else [seleccion_inicial]
+            ),
+            style=BOTON_SECUNDARIO,
+        )
 
     def _aplicar_carga_empresas(self):
         """Carga empresas, arma el panel izquierdo y muestra diálogo de activación."""
@@ -103,100 +184,104 @@ class HomePage(ft.Column):
             self.cargar_empresas()
             if len(self.productos_disponibles) >= 2:
                 seleccion_inicial = self.productos_disponibles[0]
-                self.segmented_button = ft.SegmentedButton(
-                    allow_multiple_selection=False,
-                    allow_empty_selection=False,
-                    selected=[seleccion_inicial],
-                    segments=[
-                        ft.Segment(value="NI", label=ft.Text("Norma Internacional")),
-                        ft.Segment(value="PH", label=ft.Text("Propiedad Horizontal")),
-                    ],
-                    on_change=lambda e: self.construir_empresas_column(
-                        [next(iter(e.control.selected))] if e.control.selected else [seleccion_inicial]
-                    ),
-                    style=BOTON_SECUNDARIO,
-                )
+                self.segmented_button = self._construir_segmented_productos(seleccion_inicial)
                 self._lado_izquierdo.controls = [self.loader_home, self.segmented_button, self.empresas_column]
                 self.construir_empresas_column([seleccion_inicial])
             elif len(self.productos_disponibles) == 1:
+                self.segmented_button = None
                 self._lado_izquierdo.controls = [self.loader_home, self.empresas_column]
                 self.construir_empresas_column(list(self.productos_disponibles))
             else:
+                self.segmented_button = None
                 self._lado_izquierdo.controls = [self.loader_home, self.empresas_column]
         except Exception as ex:
             self.mostrar_mensaje(f"Error cargando empresas: {ex}", 6000)
         finally:
             loader_row_fin(self._page, self.loader_home)
 
+    def _producto_actual_para_etiquetas(self, producto: str) -> str:
+        if self.segmented_button and self.segmented_button.selected:
+            return next(iter(self.segmented_button.selected), producto)
+        return producto
+
+    def _construir_tablero_principal(self) -> ft.Stack:
+        cell = _CELL_HOME_TAM
+        gap = _GAP_HOME_NAV
+        C1, C2, C3, C4, C5, C6 = _COLORES_TILES_NAV
+
+        return ft.Stack(
+            width=cell * 4 + gap * 2,
+            height=cell * 3 + gap * 2,
+            controls=[
+                _container_baldosa_nav(
+                    C1,
+                    ft.Icons.DESCRIPTION,
+                    "1. Formatos y conceptos",
+                    cell * 2 + gap,
+                    cell,
+                    0,
+                    0,
+                    lambda e: self.navegar("/home/formatos_conceptos"),
+                ),
+                _container_baldosa_nav(
+                    C2,
+                    ft.Icons.PEOPLE,
+                    "2. Cartilla de terceros",
+                    cell,
+                    cell,
+                    cell * 2 + gap * 2,
+                    0,
+                    lambda e: self.navegar("/home/cartilla_terceros"),
+                ),
+                _container_baldosa_nav(
+                    C3,
+                    ft.Icons.UPLOAD_FILE,
+                    "3. Toma de información",
+                    cell,
+                    cell + gap,
+                    0,
+                    cell + gap,
+                    lambda e: self.navegar("/home/toma_informacion"),
+                ),
+                _container_baldosa_nav(
+                    C4,
+                    ft.Icons.WORK,
+                    "4. Hoja de trabajo",
+                    cell,
+                    cell * 2 + gap,
+                    cell + gap,
+                    cell + gap,
+                    lambda e: self.navegar("/home/hoja_trabajo"),
+                ),
+                _container_baldosa_nav(
+                    C5,
+                    ft.Icons.CONTENT_COPY,
+                    "5. Copias",
+                    cell,
+                    cell,
+                    2 * cell + 2 * gap,
+                    cell + gap,
+                    lambda e: self.navegar(self.copias_dialog.abrir),
+                ),
+                _container_baldosa_nav(
+                    C6,
+                    ft.Icons.CODE,
+                    "6. Generar XML",
+                    cell * 2 + gap,
+                    cell,
+                    cell * 2 + gap * 2,
+                    2 * cell + 2 * gap,
+                    lambda e: self.navegar("/home/generar_xml"),
+                ),
+            ],
+            alignment=ft.Alignment(1, -50),
+        )
+
     # ---------- UI principal ----------
     def view(self):
         self._lado_izquierdo = ft.Column(controls=[self.loader_home, self.empresas_column], expand=False)
 
-        cell = 150   # tamaño base de celda
-        gap = 10     # espacio entre celdas
-
-        # paleta aproximada como la imagen
-        C1 = "#66A357"   # 1
-        C2 = "#8B7284"   # 2
-        C3 = "#D5CA70"   # 3
-        C4 = "#525D79"   # 4
-        C5 = "#4F8F92"   # 5
-        C6 = "#812C5A"   # 6
-
-        def _tile_btn(bgcolor: str, icon: str, label: str, w: float, h: float, left: float, top: float, on_click):
-            """Baldosa focuseable con Tab, estilo visual idéntico al original."""
-            return ft.Container(
-                content=ft.ElevatedButton(
-                    content=ft.Column(
-                        [ft.Icon(icon, size=40, color="white"),
-                         ft.Text(label, size=14, weight="bold", color="white")],
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                        expand=True,
-                    ),
-                    width=w,
-                    height=h,
-                    style=ft.ButtonStyle(
-                        bgcolor=bgcolor,
-                        color="white",
-                        elevation=0,
-                        padding=0,
-                        shape=ft.RoundedRectangleBorder(radius=0),
-                        overlay_color=ft.Colors.with_opacity(0.15, "white"),
-                    ),
-                    on_click=on_click,
-                ),
-                left=left,
-                top=top,
-                width=w,
-                height=h,
-            )
-
-        tablero = ft.Stack(
-            width=cell*4 + gap*2,
-            height=cell*3 + gap*2,
-            controls=[
-                _tile_btn(C1, ft.Icons.DESCRIPTION, "1. Formatos y conceptos",
-                          cell*2+gap, cell, 0, 0,
-                          lambda e: self.navegar("/home/formatos_conceptos")),
-                _tile_btn(C2, ft.Icons.PEOPLE, "2. Cartilla de terceros",
-                          cell, cell, cell*2+gap*2, 0,
-                          lambda e: self.navegar("/home/cartilla_terceros")),
-                _tile_btn(C3, ft.Icons.UPLOAD_FILE, "3. Toma de información",
-                          cell, cell+gap, 0, cell+gap,
-                          lambda e: self.navegar("/home/toma_informacion")),
-                _tile_btn(C4, ft.Icons.WORK, "4. Hoja de trabajo",
-                          cell, cell*2+gap, cell+gap, cell+gap,
-                          lambda e: self.navegar("/home/hoja_trabajo")),
-                _tile_btn(C5, ft.Icons.CONTENT_COPY, "5. Copias",
-                          cell, cell, 2*cell+2*gap, cell+gap,
-                          lambda e: self.navegar(self.copias_dialog.abrir)),
-                _tile_btn(C6, ft.Icons.CODE, "6. Generar XML",
-                          cell*2+gap, cell, cell*2+gap*2, 2*cell+2*gap,
-                          lambda e: self.navegar("/home/generar_xml")),
-            ],
-            alignment=ft.Alignment(1, -50),
-        )
+        tablero = self._construir_tablero_principal()
 
         return ft.Container(
             expand=True,
@@ -296,9 +381,12 @@ class HomePage(ft.Column):
                 ft.TextButton(content="Consorcios", icon=ft.Icons.GROUPS_3_OUTLINED,
                               on_click=lambda e: self.navegar(self.consorcios_dialog.open_consorcios_dialog),
                               style=BOTON_SUBLISTA),
-                ft.TextButton(content=f"Restaurar desde {next(iter(self.segmented_button.selected), producto) if self.segmented_button else producto}", icon=ft.Icons.DOWNLOAD_OUTLINED,
-                              on_click=lambda e: self.navegar(abrir_restaurar_bottomsheet),
-                              style=BOTON_SUBLISTA)
+                ft.TextButton(
+                    content=f"Restaurar desde {self._producto_actual_para_etiquetas(producto)}",
+                    icon=ft.Icons.DOWNLOAD_OUTLINED,
+                    on_click=lambda e: self.navegar(abrir_restaurar_bottomsheet),
+                    style=BOTON_SUBLISTA,
+                )
             ],
         )
         wrapper = ft.Column(controls=[fila, submenu], spacing=-2)
@@ -308,18 +396,8 @@ class HomePage(ft.Column):
             if not licencia or not licencia.empresa_activada(producto, int(codigo)):
                 self.mostrar_mensaje("Debe activar la empresa en Licenciamiento antes de usarla", 5000)
                 return
-            session.EMPRESA_ACTUAL = None      
-            # Cerrar todos los demás submenus y devolverles estilo original
-            for nombre_e, sub in list(self.submenus.items()):
-                if sub != submenu:
-                    sub.visible = False
-                    parent = sub.parent
-                    fila_anterior = parent.controls[0]  # Row con botón + loader
-                    boton_ant = fila_anterior.controls[0]
-                    boton_ant.icon = None
-                    boton_ant.icon_color = None
-                    boton_ant.style = BOTON_LISTA
-                    parent.update()
+            session.EMPRESA_ACTUAL = None
+            self._restaurar_estilo_otros_submenus(submenu)
 
             # Abrir/cerrar el actual
             submenu.visible = not submenu.visible
@@ -359,7 +437,7 @@ class HomePage(ft.Column):
         if not session.EMPRESA_ACTUAL:
             self.mostrar_mensaje("Debe seleccionar una empresa antes de continuar", 4444)
             return
-        if type(ruta) == str:
+        if isinstance(ruta, str):
             if self._app:
                 self._app._loader_overlay_mostrar(True)
             asyncio.create_task(self._page.push_route(ruta))
