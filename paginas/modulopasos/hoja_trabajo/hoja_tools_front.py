@@ -15,6 +15,26 @@ if TYPE_CHECKING:
     )
     from domain.entities.concepto_detalle_hoja_trabajo import ConceptoDetalleHojaTrabajo
 
+_PALABRAS_COLUMNA_NUMERICA = ("código", "codigo", "dígito", "digito", "país", "pais")
+_NO_VISIBLES_ESQUEMA = {
+    "formato",
+    "concepto",
+    "identidad",
+    "identidadtercero",
+    "id_concepto",
+    "número de identificación",
+    "número de identificación del beneficiario",
+    "número de identificación del tercero",
+    "número de documento de identificación",
+}
+_OCULTAR_SUBSTRINGS_ESQUEMA = (
+    "PRIMER APELLIDO",
+    "SEGUNDO APELLIDO",
+    "PRIMER NOMBRE",
+    "SEGUNDO NOMBRE",
+    "OTROS NOMBRES",
+)
+
 
 def _concepto_a_dict(concepto: Any) -> dict | None:
     """Unifica dict legacy `{codigo, formato}` y entidad `ConceptoHojaTrabajo` para consultas de atributos."""
@@ -61,7 +81,7 @@ def es_columna_numerica(nombre: str) -> bool:
     if not nombre:
         return False
     n = nombre.strip().lower()
-    return any(k in n for k in ("código", "codigo", "dígito", "digito", "país", "pais"))
+    return any(k in n for k in _PALABRAS_COLUMNA_NUMERICA)
 
 
 def es_columna_correo_o_email(nombre: str) -> bool:
@@ -105,6 +125,15 @@ def columnas_valor_concepto(
     return out
 
 
+def _titulo_normalizado(titulo: str) -> str:
+    return (titulo or "").strip().lower()
+
+
+def _titulo_en_columnas_valor(titulo: str, columnas_valor: set) -> bool:
+    t = _titulo_normalizado(titulo)
+    return bool(t and any(_titulo_normalizado(c) == t for c in columnas_valor))
+
+
 def indices_columnas_numericas(encabezados: list, columnas_valor: set) -> set:
     """
     Devuelve índices de columnas que se alinean a la derecha en la tabla:
@@ -121,9 +150,7 @@ def indices_columnas_numericas(encabezados: list, columnas_valor: set) -> set:
         if es_columna_correo_o_email(n):
             continue
         # Combinamos heurística por nombre + pertenencia explícita al set de columnas de valor
-        if es_columna_numerica(n) or (
-            n and any((c or "").strip().lower() == n.lower() for c in columnas_valor)
-        ):
+        if es_columna_numerica(n) or _titulo_en_columnas_valor(n, columnas_valor):
             indices.add(i)
     return indices
 
@@ -152,11 +179,8 @@ def calcular_anchos_columnas(
             anchos.append(82)
         else:
             n = (titulo or "").strip().upper()
-            if columnas_clase2 and any(
-                # Atributos CLASE=2 tienen prioridad en ancho para evitar choques con reglas genéricas (ej. "TIPO").
-                (c or "").strip().lower() == (titulo or "").strip().lower()
-                for c in columnas_clase2
-            ):
+            # Atributos CLASE=2 tienen prioridad para evitar choques con reglas genéricas (ej. "TIPO").
+            if _titulo_en_columnas_valor(titulo, columnas_clase2):
                 anchos.append(55)
             elif "IDENTIFICACIÓN" in n or "IDENTIFICACION" in n:
                 anchos.append(82)
@@ -170,11 +194,8 @@ def calcular_anchos_columnas(
                 anchos.append(151)
             elif "CÓDIGO" in n or "CODIGO" in n:
                 anchos.append(55)
-            elif columnas_valor and any(
-                # Si el encabezado coincide con alguna columna de valor, usamos ancho "de montos"
-                (c or "").strip().lower() == (titulo or "").lower()
-                for c in columnas_valor
-            ):
+            # Si el encabezado coincide con alguna columna de valor, usamos ancho "de montos".
+            elif _titulo_en_columnas_valor(titulo, columnas_valor):
                 anchos.append(111)
             else:
                 anchos.append(66)
@@ -194,23 +215,13 @@ def construir_esquema(
     - encabezado completo (Acciones, Identidad, ...),
     - set de columnas CLASE=1 (alineación y formato monetario de celda).
     """
-    # Campos internos que no se muestran como columnas
-    no_visibles = {"formato", "concepto", "identidad", "identidadtercero", "id_concepto", "número de identificación", "número de identificación del beneficiario", "número de identificación del tercero", "número de documento de identificación"}
-    # Atributos de nombre/apellido que ?no deben mostrarse en la grilla.
-    ocultar_substrings = (
-        "PRIMER APELLIDO",
-        "SEGUNDO APELLIDO",
-        "PRIMER NOMBRE",
-        "SEGUNDO NOMBRE",
-        "OTROS NOMBRES",
-    )
     presentes = set()
     for r in datos.values():
         presentes.update(
             k
             for k in r.keys()
-            if k.lower() not in no_visibles
-            and not any(s in str(k or "").upper() for s in ocultar_substrings)
+            if k.lower() not in _NO_VISIBLES_ESQUEMA
+            and not any(s in str(k or "").upper() for s in _OCULTAR_SUBSTRINGS_ESQUEMA)
         )
 
     ordenadas = []
@@ -333,7 +344,7 @@ def texto_celda_dato(
     - Decide alineación izquierda/derecha combinando índice + heurística de nombre.
     """
     n = nombre_col or ""
-    es_columna_valor = n and any((c or "").strip().lower() == n.strip().lower() for c in columnas_valor)
+    es_columna_valor = _titulo_en_columnas_valor(n, columnas_valor)
     if "tipo" in n.lower() and "documento" in n.lower():
         texto = obtener_nombre_tipodoc(valor) or (str(valor) if valor else "")
     elif es_columna_valor:
