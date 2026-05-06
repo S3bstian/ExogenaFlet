@@ -5,6 +5,7 @@ El vaciado previo por concepto en la misma transaccion usa
 """
 import time
 from collections import defaultdict
+from dataclasses import dataclass, field
 from threading import Event
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -23,6 +24,18 @@ from domain.entities.resultado_acumulacion import (
 )
 
 _ACUMULAR_CANCEL_MSG = "__ACUMULAR_CANCEL__"
+
+
+@dataclass
+class EstadoAcumulacion:
+    """Acumuladores mutables del proceso global de acumulación."""
+    total_inserts: int = 0
+    total_errores: List[Dict[str, Any]] = field(default_factory=list)
+    identidades_unificadas_global: int = 0
+    advertencias_sin_datos_map: Dict[Tuple[str, str], set] = field(default_factory=lambda: defaultdict(set))
+    conceptos_omitidos_sin_elemento: List[str] = field(default_factory=list)
+    conceptos_sin_cuentas_en_config: List[str] = field(default_factory=list)
+    conceptos_sin_filas_en_hoja: List[str] = field(default_factory=list)
 
 
 def _normalizar_tipo_elemento(raw: Any) -> str:
@@ -1110,17 +1123,9 @@ def _resultado_cancelacion_acumulacion(total_conceptos: int) -> ResultadoAcumula
     )
 
 
-def _estado_inicial_acumulacion() -> Dict[str, Any]:
+def _estado_inicial_acumulacion() -> EstadoAcumulacion:
     """Inicializa acumuladores y colecciones de salida del proceso completo."""
-    return {
-        "total_inserts": 0,
-        "total_errores": [],
-        "identidades_unificadas_global": 0,
-        "advertencias_sin_datos_map": defaultdict(set),
-        "conceptos_omitidos_sin_elemento": [],
-        "conceptos_sin_cuentas_en_config": [],
-        "conceptos_sin_filas_en_hoja": [],
-    }
+    return EstadoAcumulacion()
 
 
 def _procesar_conceptos_en_lote(
@@ -1128,7 +1133,7 @@ def _procesar_conceptos_en_lote(
     conceptos: List[Dict[str, Any]],
     total_conceptos: int,
     setsdatos: List[Tuple[Any, ...]],
-    estado: Dict[str, Any],
+    estado: EstadoAcumulacion,
     log_max_sets_detalle: int,
     log_max_inserts_detalle: int,
     en_ui: Any,
@@ -1144,8 +1149,8 @@ def _procesar_conceptos_en_lote(
             concepto_actual=concepto_actual,
             total_conceptos=total_conceptos,
             setsdatos=setsdatos,
-            advertencias_sin_datos_map=estado["advertencias_sin_datos_map"],
-            total_errores=estado["total_errores"],
+            advertencias_sin_datos_map=estado.advertencias_sin_datos_map,
+            total_errores=estado.total_errores,
             log_max_sets_detalle=log_max_sets_detalle,
             log_max_inserts_detalle=log_max_inserts_detalle,
             en_ui=en_ui,
@@ -1153,12 +1158,12 @@ def _procesar_conceptos_en_lote(
         )
         identidades_unificadas, insert_count = _acumular_resultado_concepto(
             resultado_concepto=resultado_concepto,
-            conceptos_omitidos_sin_elemento=estado["conceptos_omitidos_sin_elemento"],
-            conceptos_sin_cuentas_en_config=estado["conceptos_sin_cuentas_en_config"],
-            conceptos_sin_filas_en_hoja=estado["conceptos_sin_filas_en_hoja"],
+            conceptos_omitidos_sin_elemento=estado.conceptos_omitidos_sin_elemento,
+            conceptos_sin_cuentas_en_config=estado.conceptos_sin_cuentas_en_config,
+            conceptos_sin_filas_en_hoja=estado.conceptos_sin_filas_en_hoja,
         )
-        estado["identidades_unificadas_global"] += identidades_unificadas
-        estado["total_inserts"] += insert_count
+        estado.identidades_unificadas_global += identidades_unificadas
+        estado.total_inserts += insert_count
     return len(conceptos), concepto_en_proceso
 
 
@@ -1242,11 +1247,6 @@ def acumular_conceptos_hoja_trabajo(
             with transaccion_segura() as (con, cur):
                 setsdatos = []
                 estado = _estado_inicial_acumulacion()
-                total_errores = estado["total_errores"]
-                advertencias_sin_datos_map = estado["advertencias_sin_datos_map"]
-                conceptos_omitidos_sin_elemento = estado["conceptos_omitidos_sin_elemento"]
-                conceptos_sin_cuentas_en_config = estado["conceptos_sin_cuentas_en_config"]
-                conceptos_sin_filas_en_hoja = estado["conceptos_sin_filas_en_hoja"]
 
                 # Vacía HOJA_TRABAJO por concepto en esta misma transacción; al cancelar o fallar,
                 # el rollback restaura también lo borrado aquí.
@@ -1272,18 +1272,18 @@ def acumular_conceptos_hoja_trabajo(
                 # ==================== RESUMEN FINAL ====================
                 _imprimir_resumen_final_acumulacion(
                     total_conceptos=total_conceptos,
-                    total_inserts=estado["total_inserts"],
-                    identidades_unificadas_global=estado["identidades_unificadas_global"],
-                    total_errores=total_errores,
+                    total_inserts=estado.total_inserts,
+                    identidades_unificadas_global=estado.identidades_unificadas_global,
+                    total_errores=estado.total_errores,
                 )
                 return _construir_resultado_exito(
                     conceptos=conceptos,
-                    total_inserts=estado["total_inserts"],
-                    total_errores=total_errores,
-                    conceptos_omitidos_sin_elemento=conceptos_omitidos_sin_elemento,
-                    conceptos_sin_cuentas_en_config=conceptos_sin_cuentas_en_config,
-                    conceptos_sin_filas_en_hoja=conceptos_sin_filas_en_hoja,
-                    advertencias_sin_datos_map=advertencias_sin_datos_map,
+                    total_inserts=estado.total_inserts,
+                    total_errores=estado.total_errores,
+                    conceptos_omitidos_sin_elemento=estado.conceptos_omitidos_sin_elemento,
+                    conceptos_sin_cuentas_en_config=estado.conceptos_sin_cuentas_en_config,
+                    conceptos_sin_filas_en_hoja=estado.conceptos_sin_filas_en_hoja,
+                    advertencias_sin_datos_map=estado.advertencias_sin_datos_map,
                 )
         except RuntimeError as e:
             if str(e) == _ACUMULAR_CANCEL_MSG:
