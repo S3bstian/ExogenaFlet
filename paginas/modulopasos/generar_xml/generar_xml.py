@@ -354,41 +354,59 @@ class GenerarXmlPage(ft.Column):
 
     # ---------- Construcción del formulario de modificación ----------
     def _build_modificar_form(self):
-        # valores por defecto: fecha/hora actuales y periodo de reporte
-        ahora = datetime.now()
-        hoy_str = ahora.strftime("%Y-%m-%d")
-        hora_str = ahora.strftime("%H:%M:%S")
-        periodo = PERIODO
-        fecha_ini_str = f"{periodo}-01-01"
-        fecha_fin_str = f"{periodo}-12-31"
-
-        def tf(label, disabled=False, options=None, value=None):
-            if options is not None:
-                return DropdownCompact(
-                    label=label,
-                    value=value,
-                    options=[ft.DropdownOption(key=v, text=v) for _, v in options.items()],
-                    width=300,
-                )
-            return ft.TextField(
-                label=label,
-                value=value,
-                disabled=disabled,
-                border_color=PINK_200,
-                label_style=ft.TextStyle(color=GREY_700),
-                width=300,
-                height=55,
-            )
-
+        """Construye controles del formulario de cabecera con valores por defecto."""
+        defaults = self._valores_default_cabecera()
         self.campos_modificar = {
-            "concepto": tf("Concepto", options={'01': "Insercion", '02': "Reemplazo"}, value="Insercion" if self.selected_formato[3] == "01" else "Reemplazo"),
-            "version": tf("Version", disabled=True, value = self.selected_formato[4]),
-            "numenvio": tf("Numero de envio", value=self.selected_formato[5]),
-            "fechaenvio": tf("Fecha de envio", value=hoy_str ),# if self.selected_formato[6] == None else self.selected_formato[6][:9]
-            "horaenvio": tf("Hora de envio", value=hora_str ),# if self.selected_formato[6] == None else self.selected_formato[6][10:]
-            "fechainicial": tf("Fecha inicial", value=fecha_ini_str),
-            "fechafinal": tf("Fecha fin", value=fecha_fin_str),
+            "concepto": self._control_modificar_dropdown(
+                "Concepto",
+                {"01": "Insercion", "02": "Reemplazo"},
+                "Insercion" if self.selected_formato[3] == "01" else "Reemplazo",
+            ),
+            "version": self._control_modificar_texto(
+                "Version",
+                defaults["version"],
+                disabled=True,
+            ),
+            "numenvio": self._control_modificar_texto("Numero de envio", defaults["numenvio"]),
+            "fechaenvio": self._control_modificar_texto("Fecha de envio", defaults["fechaenvio"]),
+            "horaenvio": self._control_modificar_texto("Hora de envio", defaults["horaenvio"]),
+            "fechainicial": self._control_modificar_texto("Fecha inicial", defaults["fechainicial"]),
+            "fechafinal": self._control_modificar_texto("Fecha fin", defaults["fechafinal"]),
         }
+
+    def _valores_default_cabecera(self) -> dict:
+        """Arma defaults de cabecera según fecha actual, periodo y formato seleccionado."""
+        ahora = datetime.now()
+        periodo = PERIODO
+        return {
+            "version": self.selected_formato[4],
+            "numenvio": self.selected_formato[5],
+            "fechaenvio": ahora.strftime("%Y-%m-%d"),
+            "horaenvio": ahora.strftime("%H:%M:%S"),
+            "fechainicial": f"{periodo}-01-01",
+            "fechafinal": f"{periodo}-12-31",
+        }
+
+    def _control_modificar_dropdown(self, label: str, options: dict, value: str) -> DropdownCompact:
+        """Construye dropdown estándar para campos de cabecera tipo lista."""
+        return DropdownCompact(
+            label=label,
+            value=value,
+            options=[ft.DropdownOption(key=v, text=v) for _, v in options.items()],
+            width=300,
+        )
+
+    def _control_modificar_texto(self, label: str, value: str, *, disabled: bool = False) -> ft.TextField:
+        """Construye textfield estándar para campos de cabecera."""
+        return ft.TextField(
+            label=label,
+            value=value,
+            disabled=disabled,
+            border_color=PINK_200,
+            label_style=ft.TextStyle(color=GREY_700),
+            width=300,
+            height=55,
+        )
 
     def _ir_a_validar(self):
         self.step = 1
@@ -1209,15 +1227,21 @@ class GenerarXmlPage(ft.Column):
 
     def _iniciar_generacion_xml(self) -> None:
         """Valida formulario/cabecera y dispara generación asíncrona."""
-        if not self._campos_modificar_completos():
-            self._mostrar_mensaje("Complete los campos obligatorios antes de generar el XML.", 4444)
-            return
-        resultado = self._validar_datos_cabecera()
-        if resultado["errores"]:
-            self._mostrar_mensaje("Hay errores en los datos. Revise y corrija antes de generar.", 5000)
+        if not self._puede_generar_xml():
             return
         loader_row_trabajo(self._page, self.loader, None, "Generando XML...")
         self._page.run_thread(self._generar_xml_worker)
+
+    def _puede_generar_xml(self) -> bool:
+        """Consolida prevalidaciones del formulario antes de iniciar generación."""
+        if not self._campos_modificar_completos():
+            self._mostrar_mensaje("Complete los campos obligatorios antes de generar el XML.", 4444)
+            return False
+        resultado = self._validar_datos_cabecera()
+        if resultado["errores"]:
+            self._mostrar_mensaje("Hay errores en los datos. Revise y corrija antes de generar.", 5000)
+            return False
+        return True
 
     def _obtener_cantidad_registros_cache(self) -> int:
         """Cuenta registros que se usarán para generar XML desde cache de hoja."""
@@ -1257,19 +1281,7 @@ class GenerarXmlPage(ft.Column):
         if not self.campos_modificar:
             self._build_modificar_form()
 
-        cantidad_registros = self._obtener_cantidad_registros_cache()
-        controles = list(self.campos_modificar.values())
-        if cantidad_registros > 5000:
-            controles.append(self._crear_advertencia_particion_xml(cantidad_registros))
-
-        controles.append(
-            ft.ElevatedButton(
-                "Generar XML",
-                icon=ft.Icons.FILE_DOWNLOAD,
-                style=BOTON_PRINCIPAL,
-                on_click=lambda _e: self._iniciar_generacion_xml(),
-            )
-        )
+        controles = self._controles_render_generar()
 
         return ft.Container(
             content=ft.Column(
@@ -1281,3 +1293,19 @@ class GenerarXmlPage(ft.Column):
             alignment=ft.Alignment(0, -1),
             expand=True,
         )
+
+    def _controles_render_generar(self) -> list[ft.Control]:
+        """Compone controles del paso generar (formulario, aviso de partición y botón final)."""
+        cantidad_registros = self._obtener_cantidad_registros_cache()
+        controles = list(self.campos_modificar.values())
+        if cantidad_registros > 5000:
+            controles.append(self._crear_advertencia_particion_xml(cantidad_registros))
+        controles.append(
+            ft.ElevatedButton(
+                "Generar XML",
+                icon=ft.Icons.FILE_DOWNLOAD,
+                style=BOTON_PRINCIPAL,
+                on_click=lambda _e: self._iniciar_generacion_xml(),
+            )
+        )
+        return controles
