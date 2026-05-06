@@ -1101,6 +1101,28 @@ def _resultado_error_critico_acumulacion(
     )
 
 
+def _resultado_cancelacion_acumulacion(total_conceptos: int) -> ResultadoAcumulacion:
+    """Construye resultado estándar para cancelación explícita del proceso."""
+    return ResultadoAcumulacion(
+        cancelado=True,
+        exito=False,
+        total_conceptos_solicitados=total_conceptos,
+    )
+
+
+def _estado_inicial_acumulacion() -> Dict[str, Any]:
+    """Inicializa acumuladores y colecciones de salida del proceso completo."""
+    return {
+        "total_inserts": 0,
+        "total_errores": [],
+        "identidades_unificadas_global": 0,
+        "advertencias_sin_datos_map": defaultdict(set),
+        "conceptos_omitidos_sin_elemento": [],
+        "conceptos_sin_cuentas_en_config": [],
+        "conceptos_sin_filas_en_hoja": [],
+    }
+
+
 def acumular_conceptos_hoja_trabajo(
     conceptos: List[Dict[str, Any]],
     loader: Any,
@@ -1180,18 +1202,12 @@ def acumular_conceptos_hoja_trabajo(
         try:
             with transaccion_segura() as (con, cur):
                 setsdatos = []
-                
-                # --- contador para el bottomsheet ---
-                total_conceptos = len(conceptos)
-                concepto_actual = 0
-                total_inserts = 0
-                total_errores = []
-                identidades_unificadas_global = 0
-                advertencias_sin_datos_map: Dict[Tuple[str, str], set] = defaultdict(set)
-                conceptos_omitidos_sin_elemento: List[str] = []
-                conceptos_sin_cuentas_en_config: List[str] = []
-                conceptos_sin_filas_en_hoja: List[str] = []
-                concepto_en_proceso = None
+                estado = _estado_inicial_acumulacion()
+                total_errores = estado["total_errores"]
+                advertencias_sin_datos_map = estado["advertencias_sin_datos_map"]
+                conceptos_omitidos_sin_elemento = estado["conceptos_omitidos_sin_elemento"]
+                conceptos_sin_cuentas_en_config = estado["conceptos_sin_cuentas_en_config"]
+                conceptos_sin_filas_en_hoja = estado["conceptos_sin_filas_en_hoja"]
 
                 # Vacía HOJA_TRABAJO por concepto en esta misma transacción; al cancelar o fallar,
                 # el rollback restaura también lo borrado aquí.
@@ -1227,19 +1243,19 @@ def acumular_conceptos_hoja_trabajo(
                         conceptos_sin_cuentas_en_config=conceptos_sin_cuentas_en_config,
                         conceptos_sin_filas_en_hoja=conceptos_sin_filas_en_hoja,
                     )
-                    identidades_unificadas_global += identidades_unificadas
-                    total_inserts += insert_count
+                    estado["identidades_unificadas_global"] += identidades_unificadas
+                    estado["total_inserts"] += insert_count
 
                 # ==================== RESUMEN FINAL ====================
                 _imprimir_resumen_final_acumulacion(
                     total_conceptos=total_conceptos,
-                    total_inserts=total_inserts,
-                    identidades_unificadas_global=identidades_unificadas_global,
+                    total_inserts=estado["total_inserts"],
+                    identidades_unificadas_global=estado["identidades_unificadas_global"],
                     total_errores=total_errores,
                 )
                 return _construir_resultado_exito(
                     conceptos=conceptos,
-                    total_inserts=total_inserts,
+                    total_inserts=estado["total_inserts"],
                     total_errores=total_errores,
                     conceptos_omitidos_sin_elemento=conceptos_omitidos_sin_elemento,
                     conceptos_sin_cuentas_en_config=conceptos_sin_cuentas_en_config,
@@ -1248,11 +1264,7 @@ def acumular_conceptos_hoja_trabajo(
                 )
         except RuntimeError as e:
             if str(e) == _ACUMULAR_CANCEL_MSG:
-                return ResultadoAcumulacion(
-                    cancelado=True,
-                    exito=False,
-                    total_conceptos_solicitados=len(conceptos),
-                )
+                return _resultado_cancelacion_acumulacion(len(conceptos))
             raise
         except Exception as e:
             return _resultado_error_critico_acumulacion(
