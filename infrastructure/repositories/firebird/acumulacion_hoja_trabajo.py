@@ -25,6 +25,9 @@ from domain.entities.resultado_acumulacion import (
 )
 
 _ACUMULAR_CANCEL_MSG = "__ACUMULAR_CANCEL__"
+ConceptoData = Dict[str, Any]
+AtributoRow = Tuple[Any, ...]
+SetDatosRow = Tuple[Any, ...]
 
 
 @dataclass
@@ -79,18 +82,18 @@ def _get_or_default(row: Any, idx: int, default: Any) -> Any:
     return row[idx] if idx < len(row) else default
 
 
-def _agrupar_por_identidad(setsdatos: List[Tuple[Any, ...]], idx_identidad: int) -> Dict[Any, List[Tuple[Any, ...]]]:
+def _agrupar_por_identidad(setsdatos: List[SetDatosRow], idx_identidad: int) -> Dict[Any, List[SetDatosRow]]:
     """Agrupa filas por identidad usando el índice indicado."""
-    grupos: Dict[Any, List[Tuple[Any, ...]]] = defaultdict(list)
+    grupos: Dict[Any, List[SetDatosRow]] = defaultdict(list)
     for row in setsdatos:
         grupos[_get_or_default(row, idx_identidad, "")].append(row)
     return grupos
 
 
-def _unificar_tipo_t(setsdatos: List[Tuple[Any, ...]]) -> Tuple[List[Tuple[Any, ...]], Dict[Any, Dict[str, Any]]]:
+def _unificar_tipo_t(setsdatos: List[SetDatosRow]) -> Tuple[List[SetDatosRow], Dict[Any, Dict[str, Any]]]:
     """Unifica filas tipo T por identidad sumando campos monetarios."""
     grupos = _agrupar_por_identidad(setsdatos, 1)
-    merged: List[Tuple[Any, ...]] = []
+    merged: List[SetDatosRow] = []
     info: Dict[Any, Dict[str, Any]] = {}
     for identidad, filas in grupos.items():
         if len(filas) > 1:
@@ -113,10 +116,10 @@ def _unificar_tipo_t(setsdatos: List[Tuple[Any, ...]]) -> Tuple[List[Tuple[Any, 
     return merged, info
 
 
-def _unificar_tipo_b(setsdatos: List[Tuple[Any, ...]]) -> Tuple[List[Tuple[Any, ...]], Dict[Any, Dict[str, Any]]]:
+def _unificar_tipo_b(setsdatos: List[SetDatosRow]) -> Tuple[List[SetDatosRow], Dict[Any, Dict[str, Any]]]:
     """Unifica filas tipo B por identidad sumando saldo."""
     grupos = _agrupar_por_identidad(setsdatos, 0)
-    merged: List[Tuple[Any, ...]] = []
+    merged: List[SetDatosRow] = []
     info: Dict[Any, Dict[str, Any]] = {}
     for identidad, filas in grupos.items():
         if len(filas) > 1:
@@ -132,10 +135,10 @@ def _unificar_tipo_b(setsdatos: List[Tuple[Any, ...]]) -> Tuple[List[Tuple[Any, 
     return merged, info
 
 
-def _unificar_tipo_a(setsdatos: List[Tuple[Any, ...]]) -> Tuple[List[Tuple[Any, ...]], Dict[Any, Dict[str, Any]]]:
+def _unificar_tipo_a(setsdatos: List[SetDatosRow]) -> Tuple[List[SetDatosRow], Dict[Any, Dict[str, Any]]]:
     """Unifica filas tipo A por tercero sumando saldos y movimientos."""
     grupos = _agrupar_por_identidad(setsdatos, 3)
-    merged: List[Tuple[Any, ...]] = []
+    merged: List[SetDatosRow] = []
     info: Dict[Any, Dict[str, Any]] = {}
     for identidad, filas in grupos.items():
         if len(filas) > 1:
@@ -159,8 +162,8 @@ def _unificar_tipo_a(setsdatos: List[Tuple[Any, ...]]) -> Tuple[List[Tuple[Any, 
 
 def _unificar_setsdatos_por_tipo(
     tipo_el: str,
-    setsdatos: List[Tuple[Any, ...]],
-) -> Tuple[List[Tuple[Any, ...]], Dict[Any, Dict[str, Any]]]:
+    setsdatos: List[SetDatosRow],
+) -> Tuple[List[SetDatosRow], Dict[Any, Dict[str, Any]]]:
     """Unifica sets por tipo de elemento y retorna datos unificados + detalle de duplicados."""
     if tipo_el == "T":
         return _unificar_tipo_t(setsdatos)
@@ -171,7 +174,7 @@ def _unificar_setsdatos_por_tipo(
     return setsdatos, {}
 
 
-def _obtener_idtercero_por_tipo(tipo_el: str, setdatos: Tuple[Any, ...]) -> Any:
+def _obtener_idtercero_por_tipo(tipo_el: str, setdatos: SetDatosRow) -> Any:
     """Obtiene identidad/tercero según la estructura del tipo de elemento."""
     if tipo_el == "T":
         return _get_or_default(setdatos, 1, "")
@@ -185,8 +188,8 @@ def _obtener_idtercero_por_tipo(tipo_el: str, setdatos: Tuple[Any, ...]) -> Any:
 
 def _resolver_valor_atributo(
     tipo_el: str,
-    attr: Tuple[Any, ...],
-    setdatos: Tuple[Any, ...],
+    attr: AtributoRow,
+    setdatos: SetDatosRow,
     concepto_codigo: Any,
     set_idx: int,
 ) -> Any:
