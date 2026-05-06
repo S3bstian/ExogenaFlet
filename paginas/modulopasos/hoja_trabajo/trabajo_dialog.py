@@ -1318,24 +1318,14 @@ class TrabajoDialog:
     def _construir_filtros_fideicomiso(self) -> ft.Container:
         """Dropdowns de filtro con valores ya existentes en hoja (sin duplicados)."""
         ex = self._mutar_hoja().obtener_valores_fideicomiso_existentes(self.concepto or {})
-
-        def uniq(vals: list) -> list:
-            return list(dict.fromkeys(str(v).strip() for v in vals if str(v).strip()))
-
-        def dd(label: str, valores: list) -> DropdownCompact:
-            opts = [ft.DropdownOption(key=v, text=v) for v in uniq(valores)]
-            lbl_vis = str(label or "").strip()
-            return DropdownCompact(
-                label=lbl_vis,
-                options=opts,
-                value=None,
-                width=236,
-                expand=False,
-                tooltip=label,
-            )
-
-        self.filtro_tipo_actual = dd("Filtrar por tipo actual (opcional)", ex.get("tipo", []))
-        self.filtro_subtipo_actual = dd("Filtrar por subtipo actual (opcional)", ex.get("subtipo", []))
+        self.filtro_tipo_actual = self._dropdown_filtro_fideicomiso(
+            "Filtrar por tipo actual (opcional)",
+            ex.get("tipo", []),
+        )
+        self.filtro_subtipo_actual = self._dropdown_filtro_fideicomiso(
+            "Filtrar por subtipo actual (opcional)",
+            ex.get("subtipo", []),
+        )
 
         return ft.Container(
             content=ft.Column(
@@ -1350,6 +1340,23 @@ class TrabajoDialog:
                 spacing=4,
             ),
             padding=ft.padding.only(left=9, right=9, top=4, bottom=8),
+        )
+
+    def _valores_unicos_no_vacios(self, valores: list) -> list[str]:
+        """Normaliza valores y elimina duplicados preservando orden."""
+        return list(dict.fromkeys(str(v).strip() for v in valores if str(v).strip()))
+
+    def _dropdown_filtro_fideicomiso(self, label: str, valores: list) -> DropdownCompact:
+        """Construye un dropdown de filtro compacto para fideicomiso masivo."""
+        opciones = [ft.DropdownOption(key=v, text=v) for v in self._valores_unicos_no_vacios(valores)]
+        etiqueta_visible = str(label or "").strip()
+        return DropdownCompact(
+            label=etiqueta_visible,
+            options=opciones,
+            value=None,
+            width=236,
+            expand=False,
+            tooltip=label,
         )
 
     def _padre_catalogo_dependiente(self, attr: str) -> str | None:
