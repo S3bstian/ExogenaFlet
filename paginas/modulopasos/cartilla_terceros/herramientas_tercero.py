@@ -72,23 +72,10 @@ class TerceroDialog:
     # ==========================================================
     # =============== ABRIR DIALOGO =============================
     # ==========================================================
-    def abrir(self, tercero=None, origen="insertar", terceros=None):
-        print("tercero", tercero)
-        self.origen = origen or "insertar"
-        self.modo = "editar" if tercero else "nuevo"
-
-        # ---------------- MODO REEMPLAZAR (HERRAMIENTAS TERCERO) ---------------
-        if self.origen == "reemplazar":
-            self._build_dialogo_reemplazar()
-            return
-
-        # ---------------- MODO DIVIDIR NOMBRES ---------------
-        if self.origen == "dividir_nombres":
-            self._build_dialogo_dividir_nombres(terceros or [])
-            return
-
-        # ---------------- MODO NORMAL (NUEVO / EDITAR) ------------------------
-        tercero = tercero or {
+    @staticmethod
+    def _tercero_default() -> dict:
+        """Retorna estructura base para creación de tercero."""
+        return {
             "id": None,
             "identidad": 0,
             "tipodocumento": 0,
@@ -105,80 +92,114 @@ class TerceroDialog:
             "municipio": 0,
         }
 
-        def tf(label, key=None, disabled=False, options=None, on_change=None):
-            val = tercero.get(key) if tercero.get(key) != 0 else ""
-            if key == "pais" and val != "":
-                val = obtener_nombre_pais(val) or val
-            elif key == "departamento" and val != "":
-                val = obtener_nombre_departamento(val) or val
-            elif key == "municipio" and val != "":
-                val = obtener_nombre_municipio(val, tercero.get("departamento")) or val
-            elif key == "naturaleza":
-                if val == "":
-                    val = options[0]
-                elif val == 1:
-                    val = options[1]
-            if options is not None:
-                return DropdownCompact(
-                    label=label,
-                    value=val,
-                    options=[ft.DropdownOption(key=o, text=o) for o in options],
-                    on_select=on_change,
-                    expand=True,
-                )
-            else:
-                # Documento y DV: solo dígitos en UI + validación al guardar (también desde hoja de trabajo).
-                solo_digitos = key in ("identidad", "digitoverificacion")
-                return ft.TextField(
-                    label=label,
-                    value=val or "",
-                    disabled=disabled,
-                    border_color=PINK_200,
-                    label_style=ft.TextStyle(color=GREY_700),
-                    keyboard_type=ft.KeyboardType.NUMBER if solo_digitos else None,
-                    input_filter=ft.NumbersOnlyInputFilter() if solo_digitos else None,
-                )
+    def _valor_inicial_control_tercero(self, tercero: dict, key: str, options=None):
+        """Resuelve valor inicial visible para controles del formulario de tercero."""
+        val = tercero.get(key) if tercero.get(key) != 0 else ""
+        if key == "pais" and val != "":
+            return obtener_nombre_pais(val) or val
+        if key == "departamento" and val != "":
+            return obtener_nombre_departamento(val) or val
+        if key == "municipio" and val != "":
+            return obtener_nombre_municipio(val, tercero.get("departamento")) or val
+        if key == "naturaleza":
+            if val == "":
+                return options[0] if options else ""
+            if val == 1:
+                return options[1] if options and len(options) > 1 else val
+        return val
 
-        # ---- Campos ----
-        identidad = tf("Numero Documento", "identidad", disabled=(self.modo == "editar"))
-        naturaleza = ["P. Natural", "P. Juridica"]
-        dd_naturaleza = tf("Tipo Persona", "naturaleza", options=naturaleza)
-        dverificacion = tf("Digito Verificacion", "digitoverificacion")
-        tipodocumento = [t[1][1] for t in TIPOSDOC.items()]
-        self.dd_documentos = tf("Tipo Documento", "tipodocumento", options=tipodocumento)
-        razon = tf("Razón Social", "razonsocial")
-        p_apellido = tf("Primer Apellido", "primerapellido")
-        s_apellido = tf("Segundo Apellido", "segundoapellido")
-        p_nombre = tf("Primer Nombre", "primernombre")
-        s_nombre = tf("Segundo Nombre", "segundonombre")
-        direccion = tf("Dirección", "direccion")
-
-        paises = [p for p in PAISES.values()]
-        self.dd_pais = tf("País", "pais", options=paises, on_change=self._on_pais_change)
-
-        pais_cod = tercero.get("pais")
-        if pais_cod is not None and pais_cod != "" and pais_cod != 0:
-            try:
-                pais_cod_int = int(pais_cod)
-                depto_inicial = [d[0] for d in DEPARTAMENTOS.values() if int(d[1]) == pais_cod_int]
-            except (ValueError, TypeError):
-                depto_inicial = []
-        else:
-            depto_inicial = []
-        self.dd_departamento = tf(
-            "Departamento", "departamento", options=depto_inicial, on_change=self._on_departamento_change
+    def _control_formulario_tercero(self, tercero: dict, label, key=None, disabled=False, options=None, on_change=None):
+        """Crea control (dropdown/textfield) para formulario normal de tercero."""
+        val = self._valor_inicial_control_tercero(tercero, key, options)
+        if options is not None:
+            return DropdownCompact(
+                label=label,
+                value=val,
+                options=[ft.DropdownOption(key=o, text=o) for o in options],
+                on_select=on_change,
+                expand=True,
+            )
+        solo_digitos = key in ("identidad", "digitoverificacion")
+        return ft.TextField(
+            label=label,
+            value=val or "",
+            disabled=disabled,
+            border_color=PINK_200,
+            label_style=ft.TextStyle(color=GREY_700),
+            keyboard_type=ft.KeyboardType.NUMBER if solo_digitos else None,
+            input_filter=ft.NumbersOnlyInputFilter() if solo_digitos else None,
         )
-        
+
+    def _opciones_departamento_inicial(self, tercero: dict) -> list:
+        """Calcula opciones iniciales de departamento según país actual del tercero."""
+        pais_cod = tercero.get("pais")
+        if pais_cod is None or pais_cod in ("", 0):
+            return []
+        try:
+            pais_cod_int = int(pais_cod)
+        except (ValueError, TypeError):
+            return []
+        return [d[0] for d in DEPARTAMENTOS.values() if int(d[1]) == pais_cod_int]
+
+    def _opciones_municipio_inicial(self, tercero: dict) -> list:
+        """Calcula opciones iniciales de municipio según departamento actual del tercero."""
         depto_cod = tercero.get("departamento")
-        if depto_cod is not None and depto_cod != "" and depto_cod != 0:
-            try:
-                depto_cod_int = int(depto_cod)
-                munis_inicial = [m[1] for m in MUNICIPIOS.values() if int(m[2]) == depto_cod_int]
-            except (ValueError, TypeError):
-                munis_inicial = []
-        else:
-            munis_inicial = []
-        self.dd_municipio = tf("Municipio", "municipio", options=munis_inicial)
+        if depto_cod is None or depto_cod in ("", 0):
+            return []
+        try:
+            depto_cod_int = int(depto_cod)
+        except (ValueError, TypeError):
+            return []
+        return [m[1] for m in MUNICIPIOS.values() if int(m[2]) == depto_cod_int]
+
+    def _crear_controles_formulario_normal(self, tercero: dict) -> dict:
+        """Construye todos los controles del diálogo normal (nuevo/editar)."""
+        naturaleza = ["P. Natural", "P. Juridica"]
+        tipodocumento = [t[1][1] for t in TIPOSDOC.items()]
+        paises = [p for p in PAISES.values()]
+        return {
+            "identidad": self._control_formulario_tercero(
+                tercero, "Numero Documento", "identidad", disabled=(self.modo == "editar")
+            ),
+            "naturaleza": self._control_formulario_tercero(
+                tercero, "Tipo Persona", "naturaleza", options=naturaleza
+            ),
+            "digitoverificacion": self._control_formulario_tercero(
+                tercero, "Digito Verificacion", "digitoverificacion"
+            ),
+            "tipodocumento": self._control_formulario_tercero(
+                tercero, "Tipo Documento", "tipodocumento", options=tipodocumento
+            ),
+            "razon": self._control_formulario_tercero(tercero, "Razón Social", "razonsocial"),
+            "p_apellido": self._control_formulario_tercero(tercero, "Primer Apellido", "primerapellido"),
+            "s_apellido": self._control_formulario_tercero(tercero, "Segundo Apellido", "segundoapellido"),
+            "p_nombre": self._control_formulario_tercero(tercero, "Primer Nombre", "primernombre"),
+            "s_nombre": self._control_formulario_tercero(tercero, "Segundo Nombre", "segundonombre"),
+            "direccion": self._control_formulario_tercero(tercero, "Dirección", "direccion"),
+            "pais": self._control_formulario_tercero(
+                tercero, "País", "pais", options=paises, on_change=self._on_pais_change
+            ),
+            "departamento": self._control_formulario_tercero(
+                tercero,
+                "Departamento",
+                "departamento",
+                options=self._opciones_departamento_inicial(tercero),
+                on_change=self._on_departamento_change,
+            ),
+            "municipio": self._control_formulario_tercero(
+                tercero,
+                "Municipio",
+                "municipio",
+                options=self._opciones_municipio_inicial(tercero),
+            ),
+        }
+
+    def _crear_dialogo_formulario_normal(self, tercero: dict, controles: dict) -> None:
+        """Arma y muestra diálogo normal de tercero (nuevo/editar)."""
+        self.dd_documentos = controles["tipodocumento"]
+        self.dd_pais = controles["pais"]
+        self.dd_departamento = controles["departamento"]
+        self.dd_municipio = controles["municipio"]
 
         titulo = "Editar tercero" if self.modo == "editar" else "Nuevo tercero"
         btn_guardar_texto = "Guardar cambios" if self.modo == "editar" else "Crear tercero"
@@ -201,17 +222,17 @@ class TerceroDialog:
             controls=[
                 ft.Row(
                     [
-                        ft.Container(self.dd_documentos, expand=1, width=222),
-                        ft.Container(identidad, expand=1),
-                        ft.Container(dd_naturaleza, width=140),
-                        ft.Container(dverificacion, width=90),
+                        ft.Container(controles["tipodocumento"], expand=1, width=222),
+                        ft.Container(controles["identidad"], expand=1),
+                        ft.Container(controles["naturaleza"], width=140),
+                        ft.Container(controles["digitoverificacion"], width=90),
                     ]
                 ),
-                ft.Row([ft.Container(razon, expand=1)]),
-                ft.Row([ft.Container(p_apellido, expand=1), ft.Container(s_apellido, expand=1)]),
-                ft.Row([ft.Container(p_nombre, expand=1), ft.Container(s_nombre, expand=1)]),
-                ft.Row([ft.Container(direccion, expand=1), ft.Container(self.dd_pais, expand=1)]),
-                ft.Row([ft.Container(self.dd_departamento, expand=1), ft.Container(self.dd_municipio, expand=1)]),
+                ft.Row([ft.Container(controles["razon"], expand=1)]),
+                ft.Row([ft.Container(controles["p_apellido"], expand=1), ft.Container(controles["s_apellido"], expand=1)]),
+                ft.Row([ft.Container(controles["p_nombre"], expand=1), ft.Container(controles["s_nombre"], expand=1)]),
+                ft.Row([ft.Container(controles["direccion"], expand=1), ft.Container(controles["pais"], expand=1)]),
+                ft.Row([ft.Container(controles["departamento"], expand=1), ft.Container(controles["municipio"], expand=1)]),
                 self.loader_guardado,
                 self.mensaje,
             ],
@@ -227,13 +248,30 @@ class TerceroDialog:
             shadow_color=PINK_200,
             elevation=15,
             shape=ft.RoundedRectangleBorder(radius=12),
-            actions=[
-                self._btn_cancelar,
-                self._btn_guardar,
-            ],
+            actions=[self._btn_cancelar, self._btn_guardar],
             actions_alignment=ft.MainAxisAlignment.END,
         )
         self.page.show_dialog(self.dialog)
+
+    def abrir(self, tercero=None, origen="insertar", terceros=None):
+        print("tercero", tercero)
+        self.origen = origen or "insertar"
+        self.modo = "editar" if tercero else "nuevo"
+
+        # ---------------- MODO REEMPLAZAR (HERRAMIENTAS TERCERO) ---------------
+        if self.origen == "reemplazar":
+            self._build_dialogo_reemplazar()
+            return
+
+        # ---------------- MODO DIVIDIR NOMBRES ---------------
+        if self.origen == "dividir_nombres":
+            self._build_dialogo_dividir_nombres(terceros or [])
+            return
+
+        # ---------------- MODO NORMAL (NUEVO / EDITAR) ------------------------
+        tercero = tercero or self._tercero_default()
+        controles = self._crear_controles_formulario_normal(tercero)
+        self._crear_dialogo_formulario_normal(tercero, controles)
 
     def _get_campo_config(self, label=None):
         lbl = label or self._campo_actual_label
