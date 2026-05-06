@@ -50,8 +50,21 @@ class CartillaTercerosPage(ft.Column):
 
         self.mensaje = ft.Text("", size=14, italic=True, visible=False, text_align=ft.TextAlign.CENTER)
 
-        # ===================== BUSCADOR =====================
-        self.search_field = ft.TextField(
+        self.search_field = self._crear_search_field()
+        self.table = self._crear_tabla_terceros()
+        self._actualizar_columna_tabla()
+        self.pagination_text_footer = build_pagination_label(1, 1)
+        self.nav_row = self._crear_nav_row()
+        self._crear_panel_herramientas()
+        self.table_scroll = self._crear_table_scroll()
+        self.content = self._crear_layout_principal()
+
+    def view(self):
+        return self.content
+
+    def _crear_search_field(self) -> ft.TextField:
+        """Construye campo de búsqueda de terceros."""
+        return ft.TextField(
             label="Buscar",
             hint_text="Ej: 123456789 o Comercial S.A.",
             prefix_icon=ft.Icons.PERSON_SEARCH,
@@ -63,8 +76,9 @@ class CartillaTercerosPage(ft.Column):
             width=222,
         )
 
-        # ===================== TABLA =====================
-        self.table = ft.DataTable(
+    def _crear_tabla_terceros(self) -> ft.DataTable:
+        """Construye DataTable base para cartilla de terceros."""
+        return ft.DataTable(
             columns=[
                 ft.DataColumn(ft.Text("Tipo documento")),
                 ft.DataColumn(ft.Text("Razón Social")),
@@ -80,11 +94,10 @@ class CartillaTercerosPage(ft.Column):
             heading_row_color=PINK_50,
             divider_thickness=0.5,
         )
-        self._actualizar_columna_tabla()
 
-        # ===================== NAVEGACIÓN =====================
-        self.pagination_text_footer = build_pagination_label(1, 1)
-        self.nav_row = ft.Row(
+    def _crear_nav_row(self) -> ft.Row:
+        """Construye barra inferior de paginación."""
+        return ft.Row(
             [
                 ft.ElevatedButton(
                     "Anterior",
@@ -108,19 +121,22 @@ class CartillaTercerosPage(ft.Column):
             ],
             alignment=ft.MainAxisAlignment.CENTER,
         )
-        
 
-        # ===================== PANEL DE HERRAMIENTAS =====================
-        herramientas_items = [
+    def _items_herramientas(self) -> list[tuple[str, str, callable]]:
+        """Define botones de herramientas y sus handlers."""
+        return [
             ("Nuevo tercero", ft.Icons.ADD, lambda e: self.dialog_tercero.abrir(None)),
             ("Actualizar Cartilla Terceros", ft.Icons.CLOUD_SYNC_OUTLINED, lambda e: self.cargar_terceros()),
             ("Reemplazar", ft.Icons.SYNC, lambda e: self.dialog_tercero.abrir(origen="reemplazar")),
             ("Dividir nombres", ft.Icons.CONTENT_CUT, lambda e: self._activar_dividir_nombres()),
         ]
+
+    def _crear_panel_herramientas(self) -> None:
+        """Inicializa fila expandible de herramientas y botón toggle."""
         self.herramientas_row = ft.Row(
             controls=[
                 ft.OutlinedButton(t, icon=i, icon_color=PINK_600, style=BOTON_SECUNDARIO, on_click=a)
-                for t, i, a in herramientas_items
+                for t, i, a in self._items_herramientas()
             ],
             spacing=3,
             expand=False,
@@ -148,9 +164,10 @@ class CartillaTercerosPage(ft.Column):
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             )
         )
-        # ===================== CONTENIDO PRINCIPAL =====================
-        # Centra la DataTable cuando su ancho natural es menor que el área disponible.
-        self.table_scroll = ft.Container(
+
+    def _crear_table_scroll(self) -> ft.Container:
+        """Crea contenedor scrollable que centra la tabla en el área disponible."""
+        return ft.Container(
             content=ft.Column(
                 controls=[self.table],
                 expand=True,
@@ -161,19 +178,24 @@ class CartillaTercerosPage(ft.Column):
             alignment=ft.Alignment(0, -1),
         )
 
-        # ===================== ESTRUCTURA PRINCIPAL =====================
-        self.content = ft.Column(
+    def _crear_header_principal(self) -> ft.Row:
+        """Construye encabezado principal de la vista cartilla."""
+        return ft.Row(
             [
-                ft.Row(
-                    [
-                        ft.Text("Cartilla de Terceros", size=18, weight=ft.FontWeight.BOLD),
-                        self.search_field,
-                        self.panel_herramientas,
-                    ],
-                    alignment=ft.MainAxisAlignment.SPACE_AROUND,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    height=45,
-                ),
+                ft.Text("Cartilla de Terceros", size=18, weight=ft.FontWeight.BOLD),
+                self.search_field,
+                self.panel_herramientas,
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_AROUND,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            height=45,
+        )
+
+    def _crear_layout_principal(self) -> ft.Column:
+        """Arma layout principal con header, loader, tabla, navegación y mensaje."""
+        return ft.Column(
+            [
+                self._crear_header_principal(),
                 self.loader,
                 ft.Column(
                     controls=[self.table_scroll, self.nav_row],
@@ -187,9 +209,6 @@ class CartillaTercerosPage(ft.Column):
             margin=ft.margin.only(bottom=5),
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         )
-
-    def view(self):
-        return self.content
 
     def _texto_celda(self, valor: str, *, max_lines: int = 1) -> ft.Text:
         """ sin wrap, elipsis y tooltip con el texto completo."""
