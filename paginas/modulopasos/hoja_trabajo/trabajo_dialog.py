@@ -192,12 +192,17 @@ class TrabajoDialog:
         - `_guardar_nuevo()`  si modo = 'nuevo'
         - `_guardar_edicion()` si modo = 'editar'
         """
-        if not self._validar_formulario():
-            self._mostrar_error_validacion_guardado()
-            self.page.update()
+        if not self._validacion_formulario_exitosa():
             return
-
         self._guardar_segun_modo()
+
+    def _validacion_formulario_exitosa(self) -> bool:
+        """Centraliza validación + feedback visual antes de ejecutar guardado."""
+        if self._validar_formulario():
+            return True
+        self._mostrar_error_validacion_guardado()
+        self.page.update()
+        return False
 
     def _mostrar_error_validacion_guardado(self) -> None:
         """
@@ -212,13 +217,19 @@ class TrabajoDialog:
 
     def _guardar_segun_modo(self) -> None:
         """Despacha el guardado según el modo activo del diálogo."""
-        if self.modo == "editar":
-            self._guardar_edicion()
-            return
         if self.modo == "fideicomiso_masivo":
             self._guardar_fideicomiso_masivo()
             return
-        self._guardar_nuevo()
+        accion = self._accion_guardado_payload_por_modo()
+        self._guardar_con_payload(accion)
+
+    def _accion_guardado_payload_por_modo(self):
+        """Retorna la acción de persistencia correspondiente al modo nuevo/editar."""
+        if self.modo == "editar":
+            return lambda payload: self._mutar_hoja().actualizar_entrada_hoja_trabajo(
+                self.id_concepto, self.identidad, payload
+            )
+        return lambda payload: self._mutar_hoja().crear_entrada_hoja_trabajo(payload)
     
     def _validar_formulario(self):
         """
@@ -231,11 +242,9 @@ class TrabajoDialog:
             return self._validar_formulario_fideicomiso()
 
         if not self._validar_tercero_requerido_nuevo():
-            self.page.update()
             return False
 
         errores = self._validar_campos_formulario_principal()
-        self.page.update()
         return not errores
 
     def _limpiar_errores_campos(self) -> None:
