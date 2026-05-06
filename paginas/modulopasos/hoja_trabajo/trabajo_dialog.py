@@ -830,39 +830,75 @@ class TrabajoDialog:
             keyboard_type=kbd,
         )
 
+    def _attr_en_mayusculas(self, attr: str) -> str:
+        """Retorna la etiqueta en mayúsculas para evaluaciones por nombre."""
+        return str(attr or "").strip().upper()
+
+    def _es_attr_pais(self, attr: str) -> bool:
+        """Detecta atributo país tolerando variantes de codificación."""
+        upper_attr = self._attr_en_mayusculas(attr)
+        return "PAÍS" in upper_attr or "PAÃ" in upper_attr or "PAIS" in upper_attr
+
+    def _es_attr_tipo_documento(self, attr: str) -> bool:
+        """Detecta atributo de tipo de documento por texto visible."""
+        upper_attr = self._attr_en_mayusculas(attr)
+        normalizado = str(attr or "").strip().lower()
+        return (
+            ("DOCUMENTO" in upper_attr and "TIPO" in upper_attr)
+            or normalizado.startswith("tipo de documento")
+        )
+
+    def _es_attr_departamento(self, attr: str) -> bool:
+        """Detecta atributo de departamento."""
+        return "DEPARTAMENTO" in self._attr_en_mayusculas(attr)
+
+    def _es_attr_municipio(self, attr: str) -> bool:
+        """Detecta atributo de municipio."""
+        return "MUNICIPIO" in self._attr_en_mayusculas(attr)
+
+    def _crear_control_pais(self, attr: str, val, es_editable: bool):
+        """Crea dropdown de países con callback de recarga de departamentos."""
+        return self._crear_dropdown_base(
+            attr,
+            PAISES.items(),
+            str(val) if val else None,
+            on_change=self._on_pais_change,
+            disabled=not es_editable,
+        )
+
+    def _crear_control_tipo_documento(self, attr: str, val, es_editable: bool):
+        """Crea dropdown de tipo de documento para clase 3."""
+        return self._crear_dropdown_base(
+            attr,
+            TIPOSDOC.items(),
+            str(val) if val else None,
+            disabled=not es_editable,
+        )
+
+    def _crear_control_departamento(self, attr: str, es_editable: bool):
+        """Crea dropdown de departamentos inicialmente vacío y lo registra en `self.drop_dep`."""
+        self.drop_dep = self._dropdown_vacio_datos_especificos(
+            attr, es_editable, self._on_departamento_change
+        )
+        return self.drop_dep
+
+    def _crear_control_municipio(self, attr: str, es_editable: bool):
+        """Crea dropdown de municipios inicialmente vacío y lo registra en `self.drop_mun`."""
+        self.drop_mun = self._dropdown_vacio_datos_especificos(attr, es_editable, None)
+        return self.drop_mun
+
     def _crear_control(self, attr, val, tipoacumulado, es_editable):
         """Crea el control UI según el tipo de atributo."""
-        upper_attr = attr.upper()
-
         if self._es_clase_atributo(attr, 2):
             return self._dropdown_datos_especificos(attr)
-        if "PAÍS" in upper_attr or "PAÃ" in upper_attr or "PAIS" in upper_attr:
-            return self._crear_dropdown_base(
-                attr,
-                PAISES.items(),
-                str(val) if val else None,
-                on_change=self._on_pais_change,
-                disabled=not es_editable,
-            )
-
-        es_tipo_doc_por_nombre = (
-            ("DOCUMENTO" in upper_attr and "TIPO" in upper_attr)
-            or attr.strip().lower().startswith("tipo de documento")
-        )
-        if es_tipo_doc_por_nombre and self._es_clase_atributo(attr, 3):
-            return self._crear_dropdown_base(
-                attr, TIPOSDOC.items(), str(val) if val else None, disabled=not es_editable
-            )
-
-        if "DEPARTAMENTO" in upper_attr:
-            self.drop_dep = self._dropdown_vacio_datos_especificos(
-                attr, es_editable, self._on_departamento_change
-            )
-            return self.drop_dep
-
-        if "MUNICIPIO" in upper_attr:
-            self.drop_mun = self._dropdown_vacio_datos_especificos(attr, es_editable, None)
-            return self.drop_mun
+        if self._es_attr_pais(attr):
+            return self._crear_control_pais(attr, val, es_editable)
+        if self._es_attr_tipo_documento(attr) and self._es_clase_atributo(attr, 3):
+            return self._crear_control_tipo_documento(attr, val, es_editable)
+        if self._es_attr_departamento(attr):
+            return self._crear_control_departamento(attr, es_editable)
+        if self._es_attr_municipio(attr):
+            return self._crear_control_municipio(attr, es_editable)
 
         return self._crear_control_texto_predeterminado(attr, val, es_editable)
 
