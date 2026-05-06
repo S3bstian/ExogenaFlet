@@ -135,22 +135,27 @@ class InformacionExogenaApp:
         """Construye el appbar inicial antes de reconfigurarlo por ruta."""
         self.appbar = ft.Container(
             padding=ft.padding.symmetric(horizontal=12, vertical=6),
-            content=ft.Column([
-                ft.Row(controls=[
-                        self.logo_helisa,
-                        ft.Container(expand=True),
-                        self.backbutton,
-                        self.login_button
-                    ],
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-            ],
-            alignment=ft.MainAxisAlignment.CENTER),
+            content=ft.Column(
+                [self._fila_appbar_base()],
+                alignment=ft.MainAxisAlignment.CENTER,
+            ),
             height=666,
             bgcolor=PINK_50,
             # Permite que el logo de /home (Stack en routing) se pinte fuera del alto fijo del appbar.
             clip_behavior=ft.ClipBehavior.NONE,
+        )
+
+    def _fila_appbar_base(self) -> ft.Row:
+        """Fila base del appbar reutilizable antes de variar por ruta."""
+        return ft.Row(
+            controls=[
+                self.logo_helisa,
+                ft.Container(expand=True),
+                self.backbutton,
+                self.login_button,
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
     @staticmethod
@@ -294,6 +299,12 @@ class InformacionExogenaApp:
         es_transicion = not troute.match("/")
         return route, handler, es_transicion
 
+    def _aplicar_contexto_ruta(self, handler: Any, es_transicion: bool) -> None:
+        """Aplica loader y configuración de appbar para una ruta resuelta."""
+        if es_transicion:
+            self._loader_overlay_mostrar(True)
+        self._actualizar_appbar_para_ruta(handler)
+
     def _actualizar_appbar_para_ruta(self, route_handler: Any) -> None:
         """Actualiza appbar según metadatos de la ruta activa."""
         height, appbar_content = get_appbar_content(route_handler.appbar, self)
@@ -324,9 +335,7 @@ class InformacionExogenaApp:
         res = resolve_route(troute)
         route, handler, es_transicion = self._resolver_contexto_ruta(troute, res)
         if handler:
-            if es_transicion:
-                self._loader_overlay_mostrar(True)
-            self._actualizar_appbar_para_ruta(handler)
+            self._aplicar_contexto_ruta(handler, es_transicion)
 
         self.page.run_task(self._build_and_navigate, troute, res, es_transicion, route)
 
@@ -351,15 +360,10 @@ class InformacionExogenaApp:
             await asyncio.sleep(0)
             self._reiniciar_vistas_para_ruta(troute)
 
-            if not res:
-                asyncio.create_task(self.page.push_route("/"))
+            if self._resolver_fallo_ruta(res):
                 return
 
-            _, handler = res
-            content, view_instance = handler.build_view(self.page, self)
-            self.page.views.append(self._crear_vista(route, content))
-            self.page.update()
-            self._ejecutar_on_enter_seguro(handler, self.page, view_instance)
+            self._construir_view_desde_handler(res, route)
         except Exception as ex:
             print(ex)
         finally:
@@ -374,13 +378,32 @@ class InformacionExogenaApp:
         # Una vista por ruta: evita acumular ft.View y controles al navegar (patrón Flet).
         self.page.views.clear()
 
+    def _navegar_a_ruta(self, ruta: str) -> None:
+        """Navega asíncronamente hacia la ruta indicada."""
+        asyncio.create_task(self.page.push_route(ruta))
+
+    def _resolver_fallo_ruta(self, res: Any) -> bool:
+        """Si no hay match en routing, redirige a raíz y retorna True."""
+        if res:
+            return False
+        self._navegar_a_ruta("/")
+        return True
+
+    def _construir_view_desde_handler(self, res: Any, route: str | None) -> None:
+        """Construye y pinta la vista usando el handler resuelto."""
+        _, handler = res
+        content, view_instance = handler.build_view(self.page, self)
+        self.page.views.append(self._crear_vista(route, content))
+        self.page.update()
+        self._ejecutar_on_enter_seguro(handler, self.page, view_instance)
+
     def view_pop(self, e: ft.ViewPopEvent | None):
         """Atrás: subrutas /home/... vuelven a /home (sin depender de la pila de vistas)."""
         destino = parent_route_for_back(self.page.route)
         if destino is None:
             return
         self._loader_overlay_mostrar(True)
-        asyncio.create_task(self.page.push_route(destino))
+        self._navegar_a_ruta(destino)
 
 def main(page: ft.Page):
     """Configura la ventana principal y dispara el flujo inicial de la app."""
