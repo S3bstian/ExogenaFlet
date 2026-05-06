@@ -497,6 +497,59 @@ def _imprimir_resumen_concepto(
     print(f"[ACUMULACIÓN]   Concepto {concepto_codigo}: {total_sets} set(s) → 0 insert(s)")
 
 
+def _atributos_unicos_por_id(atributos: List[Tuple[Any, ...]], raise_if_cancel: Any) -> List[Tuple[Any, ...]]:
+    """Retorna atributos sin IDs repetidos, preservando el orden de la configuración."""
+    atributos_unicos: List[Tuple[Any, ...]] = []
+    ids_procesados: set = set()
+    for idx_attr, attr in enumerate(atributos):
+        if idx_attr % 16 == 0:
+            raise_if_cancel()
+        if attr[0] in ids_procesados:
+            continue
+        ids_procesados.add(attr[0])
+        atributos_unicos.append(attr)
+    return atributos_unicos
+
+
+def _procesar_inserciones_set(
+    cur: Any,
+    atributos_unicos: List[Tuple[Any, ...]],
+    tipo_el: str,
+    setdatos: Tuple[Any, ...],
+    concepto: Dict[str, Any],
+    elemento_id: Any,
+    concepto_codigo: Any,
+    set_idx: int,
+    mostrar_detalle_set: bool,
+    inserts_detallados: int,
+    log_max_inserts_detalle: int,
+    total_errores: List[Dict[str, Any]],
+) -> Tuple[int, int]:
+    """Inserta atributos de un set y retorna (inserts_realizados, detalles_impresos)."""
+    insertados_set = 0
+    detalles_set = 0
+    for attr in atributos_unicos:
+        insertado, detalle_impreso = _insertar_atributo_en_set(
+            cur=cur,
+            attr=attr,
+            tipo_el=tipo_el,
+            setdatos=setdatos,
+            concepto=concepto,
+            elemento_id=elemento_id,
+            concepto_codigo=concepto_codigo,
+            set_idx=set_idx,
+            mostrar_detalle_set=mostrar_detalle_set,
+            inserts_detallados=inserts_detallados + detalles_set,
+            log_max_inserts_detalle=log_max_inserts_detalle,
+            total_errores=total_errores,
+        )
+        if insertado:
+            insertados_set += 1
+        if detalle_impreso:
+            detalles_set += 1
+    return insertados_set, detalles_set
+
+
 def _insertar_sets_concepto(
     cur: Any,
     setsdatos: List[Tuple[Any, ...]],
@@ -517,37 +570,27 @@ def _insertar_sets_concepto(
     total_sets = len(setsdatos)
     insert_count = 0
     inserts_detallados = 0
+    atributos_unicos = _atributos_unicos_por_id(atributos, raise_if_cancel)
 
     for i, setdatos in enumerate(setsdatos):
         raise_if_cancel()
-        atributos_procesados: set = set()
         mostrar_detalle_set = total_sets <= log_max_sets_detalle or i < log_max_sets_detalle
-
-        for idx_attr, attr in enumerate(atributos):
-            if idx_attr % 16 == 0:
-                raise_if_cancel()
-            if attr[0] in atributos_procesados:
-                continue
-
-            atributos_procesados.add(attr[0])
-            insertado, detalle_impreso = _insertar_atributo_en_set(
-                cur=cur,
-                attr=attr,
-                tipo_el=tipo_el,
-                setdatos=setdatos,
-                concepto=concepto,
-                elemento_id=elemento_id,
-                concepto_codigo=concepto_codigo,
-                set_idx=i,
-                mostrar_detalle_set=mostrar_detalle_set,
-                inserts_detallados=inserts_detallados,
-                log_max_inserts_detalle=log_max_inserts_detalle,
-                total_errores=total_errores,
-            )
-            if insertado:
-                insert_count += 1
-            if detalle_impreso:
-                inserts_detallados += 1
+        insertados_set, detalles_set = _procesar_inserciones_set(
+            cur=cur,
+            atributos_unicos=atributos_unicos,
+            tipo_el=tipo_el,
+            setdatos=setdatos,
+            concepto=concepto,
+            elemento_id=elemento_id,
+            concepto_codigo=concepto_codigo,
+            set_idx=i,
+            mostrar_detalle_set=mostrar_detalle_set,
+            inserts_detallados=inserts_detallados,
+            log_max_inserts_detalle=log_max_inserts_detalle,
+            total_errores=total_errores,
+        )
+        insert_count += insertados_set
+        inserts_detallados += detalles_set
 
         _checkpoint_progreso_insercion_sets(
             set_idx=i,
