@@ -1247,16 +1247,14 @@ class TrabajoDialog:
     def _construir_contenido_dialogo(self, controles):
         """Arma mensaje, piezas opcionales (fideicomiso, tercero) y grid según `self.modo`."""
         filas = self._construir_filas_grid_formulario(controles)
-        grid = ft.Column(filas, spacing=0)
         contenido_columna = self._bloques_superiores_dialogo()
-        contenido_columna.append(
-            ft.Row(
-                [grid],
-                alignment=ft.MainAxisAlignment.CENTER,
-                expand=True,
-            )
-        )
+        contenido_columna.append(self._fila_grid_centrada(filas))
         return self._shell_scroll_formulario(contenido_columna)
+
+    def _fila_grid_centrada(self, filas: list[ft.Row]) -> ft.Row:
+        """Centra el grid del formulario para mantener layout consistente entre modos."""
+        grid = ft.Column(filas, spacing=0)
+        return ft.Row([grid], alignment=ft.MainAxisAlignment.CENTER, expand=True)
 
     def _boton_selector_tercero(self) -> ft.Row:
         """Botón central para abrir selector de terceros en modo nuevo."""
@@ -1292,23 +1290,26 @@ class TrabajoDialog:
 
     def _bloques_superiores_dialogo(self) -> list:
         """Bloques superiores del diálogo antes del grid (mensajes, loaders, tarjetas y botones)."""
+        mostrar_selector = self._debe_mostrar_selector_tercero()
+        mostrar_boton_editar = self._debe_mostrar_boton_editar_tercero()
+        mostrar_tarjeta_tercero = self._debe_mostrar_tarjeta_tercero()
         bloques = [self.mensaje]
         if self.modo == "fideicomiso_masivo":
             bloques.append(self.loader_fideicomiso)
             bloques.append(self._construir_filtros_fideicomiso())
 
-        if self._debe_mostrar_selector_tercero() or self._debe_mostrar_boton_editar_tercero():
+        if mostrar_selector or mostrar_boton_editar:
             bloques.append(self.loader_apertura_tercero)
 
-        if self._debe_mostrar_selector_tercero():
+        if mostrar_selector:
             bloques.append(self._boton_selector_tercero())
 
-        if self._debe_mostrar_tarjeta_tercero():
+        if mostrar_tarjeta_tercero:
             bloques.append(self._crear_tarjeta_tercero())
-            if self._debe_mostrar_boton_editar_tercero():
+            if mostrar_boton_editar:
                 bloques.append(self._boton_editar_tercero())
 
-        if self.modo in ("nuevo", "editar") and not self._debe_mostrar_tarjeta_tercero():
+        if self.modo in ("nuevo", "editar") and not mostrar_tarjeta_tercero:
             tarjeta_contexto = self._crear_tarjeta_contexto_operativo()
             if tarjeta_contexto:
                 bloques.append(tarjeta_contexto)
