@@ -343,17 +343,29 @@ def validar_excepciones_especiales(
     avisos = []
     identidad_num, tipo_doc_num, pais_num, identidad_limpia = _parsear_valores_excepciones(identidad, atributos_identidad)
     if tipo_doc_num == 31:
-        campos_nombres = [c for c in ['apl1', 'apl2', 'nom1', 'nom2'] if atributos_identidad.get(c, '').strip()]
+        campos_nombres = [
+            clave_nombre
+            for clave_nombre in ["apl1", "apl2", "nom1", "nom2"]
+            if atributos_identidad.get(clave_nombre, "").strip()
+        ]
         if campos_nombres:
             avisos.append(f"No se reportarán apellidos y nombres para NITs (tipo documento 31)")
     
     if tipo_doc_num in [42, 43] and identidad_limpia.startswith('444444'):
-        campos_dir = [c for c in ['dir', 'dpto', 'mun'] if atributos_identidad.get(c, '').strip()]
+        campos_dir = [
+            clave_direccion
+            for clave_direccion in ["dir", "dpto", "mun"]
+            if atributos_identidad.get(clave_direccion, "").strip()
+        ]
         if campos_dir:
             avisos.append(f"No se reportará dirección, departamento y municipio para identidades fiscales que inician con 444444")
     
     if pais_num != 0 and pais_num != 169:
-        campos_dpto = [c for c in ['dpto', 'mun'] if atributos_identidad.get(c, '').strip()]
+        campos_dpto = [
+            clave_departamento
+            for clave_departamento in ["dpto", "mun"]
+            if atributos_identidad.get(clave_departamento, "").strip()
+        ]
         if campos_dpto:
             avisos.append(f"No se reportará departamento y municipio para países diferentes a Colombia (169)")
     
@@ -471,9 +483,9 @@ def obtener_hoja_para_generar(
         return {}
     grupos = agrupar_filas_hoja(
         rows,
-        get_id=lambda r: r[5],
-        get_id_concepto=lambda r: r[6],
-        get_identidad=lambda r: r[0],
+        get_id=lambda row: row[5],
+        get_id_concepto=lambda row: row[6],
+        get_identidad=lambda row: row[0],
     )
     resultado = {}
     for grupo in grupos:
