@@ -953,12 +953,24 @@ class TerceroDialog:
             width=300,
         )
         
+        from ui.progress import crear_loader_row, SIZE_SMALL
+        self.loader_guardado = crear_loader_row("Aplicando división de nombres...", size=SIZE_SMALL)
+        self.loader_guardado.visible = False
+        self._btn_cancelar = ft.TextButton(content="Cancelar", on_click=self.cerrar_dialog, style=BOTON_SECUNDARIO_SIN)
+        self._btn_guardar = ft.Button(
+            content="Aplicar",
+            icon=ft.Icons.CHECK,
+            on_click=lambda e: self._aplicar_dividir_nombres(terceros),
+            style=BOTON_PRINCIPAL,
+        )
+
         cuerpo = ft.Column(
             spacing=12,
             controls=[
                 ft.Text("Dividir nombres", size=16, weight=ft.FontWeight.BOLD),
                 ft.Text(f"Se dividirán {len(terceros)} tercero(s) según el orden seleccionado.", size=12),
                 self.dd_orden,
+                self.loader_guardado,
                 self.mensaje,
             ],
             tight=True,
@@ -973,13 +985,8 @@ class TerceroDialog:
             elevation=15,
             shape=ft.RoundedRectangleBorder(radius=12),
             actions=[
-                ft.TextButton(content="Cancelar", on_click=self.cerrar_dialog, style=BOTON_SECUNDARIO_SIN),
-                ft.Button(
-                    content="Aplicar",
-                    icon=ft.Icons.CHECK,
-                    on_click=lambda e: self._aplicar_dividir_nombres(terceros),
-                    style=BOTON_PRINCIPAL,
-                ),
+                self._btn_cancelar,
+                self._btn_guardar,
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
@@ -992,43 +999,47 @@ class TerceroDialog:
             self.mensaje.visible = True
             self.page.update()
             return
-        
-        partes_orden = orden.split()
-        aplicados = 0
-        
-        for t in terceros:
-            razon = (t.get("razonsocial") or "").strip()
-            if not razon:
-                continue
-            palabras = razon.split()
-            # if len(palabras) < len(partes_orden):
-            #     continue
-            
-            tercero_mod = dict(t)
-            for i, parte in enumerate(partes_orden):
-                if i < len(palabras):
-                    if parte == "Nombre1":
-                        tercero_mod["primernombre"] = palabras[i]
-                    elif parte == "Nombre2":
-                        tercero_mod["segundonombre"] = palabras[i]
-                    elif parte == "Apellido1":
-                        tercero_mod["primerapellido"] = palabras[i]
-                    elif parte == "Apellido2":
-                        tercero_mod["segundoapellido"] = palabras[i]
-            
-            self._normalizar_codigos_tercero(tercero_mod)
-            res = self.parent._terceros_uc.actualizar_tercero(tercero_mod)
-            if res and not (isinstance(res, str) and res.startswith("Error")):
-                aplicados += 1
-        
-        if aplicados == 0:
-            self.mensaje.value = "No se aplicó ningún cambio."
-        else:
-            self.mensaje.value = f"Nombres divididos en {aplicados} tercero(s)."
-            self.parent.cargar_terceros()
-        
-        self.mensaje.visible = True
-        self.page.update()
+        self._set_guardado_ocupado(True, "Aplicando división de nombres...")
+
+        def _worker():
+            partes_orden = orden.split()
+            aplicados = 0
+
+            for t in terceros:
+                razon = (t.get("razonsocial") or "").strip()
+                if not razon:
+                    continue
+                palabras = razon.split()
+                tercero_mod = dict(t)
+                for i, parte in enumerate(partes_orden):
+                    if i < len(palabras):
+                        if parte == "Nombre1":
+                            tercero_mod["primernombre"] = palabras[i]
+                        elif parte == "Nombre2":
+                            tercero_mod["segundonombre"] = palabras[i]
+                        elif parte == "Apellido1":
+                            tercero_mod["primerapellido"] = palabras[i]
+                        elif parte == "Apellido2":
+                            tercero_mod["segundoapellido"] = palabras[i]
+
+                self._normalizar_codigos_tercero(tercero_mod)
+                res = self.parent._terceros_uc.actualizar_tercero(tercero_mod)
+                if res and not (isinstance(res, str) and res.startswith("Error")):
+                    aplicados += 1
+
+            def _ui():
+                if aplicados == 0:
+                    self.mensaje.value = "No se aplicó ningún cambio."
+                else:
+                    self.mensaje.value = f"Nombres divididos en {aplicados} tercero(s)."
+                    self.parent.cargar_terceros()
+                self.mensaje.visible = True
+                self._set_guardado_ocupado(False)
+                self.page.update()
+
+            ejecutar_en_ui(self.page, _ui)
+
+        self.page.run_thread(_worker)
 
     # ==========================================================
     def cerrar_dialog(self, e=None):

@@ -15,7 +15,7 @@ from utils.validators import (
 from paginas.empresas.terceros import TercerosDialog
 from paginas.modulopasos.hoja_trabajo.hoja_tools_front import formatear_pesos
 from paginas.modulopasos.cartilla_terceros.herramientas_tercero import TerceroDialog
-from utils.ui_sync import loader_row_fin, loader_row_trabajo, loader_row_visibilidad
+from utils.ui_sync import ejecutar_en_ui, loader_row_fin, loader_row_trabajo, loader_row_visibilidad
 
 
 class TrabajoDialog:
@@ -80,6 +80,8 @@ class TrabajoDialog:
         self.filtro_subtipo_actual = None
         self.loader_fideicomiso = crear_loader_row("Aplicando cambios masivos...", size=SIZE_SMALL)
         self.loader_fideicomiso.visible = False
+        self.loader_guardado = crear_loader_row("Guardando cambios...", size=SIZE_SMALL)
+        self.loader_guardado.visible = False
         self.loader_apertura_tercero = crear_loader_row("Abriendo selector de terceros...", size=SIZE_SMALL)
         self.loader_apertura_tercero.visible = False
         self._btn_confirmar_dialogo = None
@@ -148,6 +150,7 @@ class TrabajoDialog:
         self.filtro_tipo_actual = None
         self.filtro_subtipo_actual = None
         loader_row_fin(self.page, self.loader_fideicomiso)
+        loader_row_fin(self.page, self.loader_guardado)
         loader_row_fin(self.page, self.loader_apertura_tercero)
         self._btn_confirmar_dialogo = None
 
@@ -331,10 +334,51 @@ class TrabajoDialog:
         )
 
     def _guardar_con_payload(self, accion_guardado):
-        """Construye payload y ejecuta una acción de persistencia reutilizable."""
+        """Construye payload y ejecuta guardado en background mostrando carga en el diálogo."""
         datos_para_guardar = self._construir_payload_guardado()
-        resultado = accion_guardado(datos_para_guardar)
-        self._post_guardar(resultado)
+        self._guardado_ui_ocupado(True)
+
+        def _worker():
+            resultado = None
+            error_guardado = None
+            try:
+                resultado = accion_guardado(datos_para_guardar)
+            except Exception as ex:
+                error_guardado = str(ex)
+
+            def _ui():
+                self._guardado_ui_ocupado(False)
+                if error_guardado:
+                    actualizar_mensaje_en_control(
+                        f"Error guardando registro: {error_guardado}",
+                        self.mensaje,
+                    )
+                    self.page.update()
+                    return
+                self._post_guardar(resultado)
+
+            ejecutar_en_ui(self.page, _ui)
+
+        self.page.run_thread(_worker)
+
+    def _guardado_ui_ocupado(self, ocupado: bool) -> None:
+        """Controla estado del guardado normal para evitar doble clic y mostrar progreso."""
+        if ocupado:
+            loader_row_trabajo(
+                self.page,
+                self.loader_guardado,
+                self.mensaje,
+                "Guardando cambios...",
+            )
+        else:
+            loader_row_fin(self.page, self.loader_guardado)
+            self.mensaje.visible = True
+        if self._btn_confirmar_dialogo:
+            self._btn_confirmar_dialogo.disabled = ocupado
+        if self._btn_selector_tercero:
+            self._btn_selector_tercero.disabled = ocupado
+        if self._btn_editar_tercero:
+            self._btn_editar_tercero.disabled = ocupado
 
     def _fideicomiso_ui_ocupado(self, ocupado: bool) -> None:
         """Ring + deshabilitar confirmar mientras corre el guardado masivo."""
@@ -1337,6 +1381,8 @@ class TrabajoDialog:
         if self.modo == "fideicomiso_masivo":
             bloques.append(self.loader_fideicomiso)
             bloques.append(self._construir_filtros_fideicomiso())
+        elif self.modo in ("nuevo", "editar"):
+            bloques.append(self.loader_guardado)
 
         if mostrar_selector or mostrar_boton_editar:
             bloques.append(self.loader_apertura_tercero)

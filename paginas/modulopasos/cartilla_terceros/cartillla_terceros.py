@@ -17,7 +17,7 @@ from paginas.utils.paginacion import (
 from paginas.utils.tooltips import TooltipId, tooltip
 from paginas.utils.banner_prefijo_ctrl import sync_banner_prefijo
 from ui.snackbars import crear_snackbar, mostrar_mensaje, snackbar_invisible_para_cerrar
-from utils.ui_sync import loader_row_visibilidad
+from utils.ui_sync import ejecutar_en_ui, loader_row_visibilidad
 
 class CartillaTercerosPage(ft.Column):
     def __init__(self, page: ft.Page, app=None, *, limit=20):
@@ -294,39 +294,25 @@ class CartillaTercerosPage(ft.Column):
         self.terceros_filtrados = self.terceros.copy()
 
     def cargar_terceros(self):
-        self._mostrar_loader(True)
         texto = self._filtro_busqueda_actual()
-
-        def _worker():
-            try:
-                datos, total = self._consultar_terceros(texto)
-                if not datos:
-                    self.mostrar_mensaje("No se encontraron terceros.", 8888)
-                self._actualizar_estado_terceros(datos, total)
-                self._actualizar_tabla()
-            except Exception as e:
-                self.terceros = []
-                self.mostrar_mensaje(f"Error cargando terceros: {e}", 8888)
-            finally:
-                self._mostrar_loader(False)
-
-        self._page.run_thread(_worker)
+        self._cargar_terceros_en_background(
+            texto=texto,
+            texto_loader="Cargando terceros...",
+            mensaje_error="Error cargando terceros",
+            mostrar_mensaje_sin_datos=True,
+        )
 
     def paginar(self, direction: int):
         nuevo_offset = self.offset + (direction * self.limit)
         if nuevo_offset < 0:
             return
-        self.offset = nuevo_offset
         texto = self._filtro_busqueda_actual()
-        self._mostrar_loader(True)
-        try:
-            datos, total = self._consultar_terceros(texto)
-            self._actualizar_estado_terceros(datos, total)
-            self._actualizar_tabla()
-        except Exception as e:
-            self.mostrar_mensaje(f"Error cargando página: {e}", 8888)
-        finally:
-            self._mostrar_loader(False)
+        self._cargar_terceros_en_background(
+            texto=texto,
+            texto_loader="Cargando página...",
+            mensaje_error="Error cargando página",
+            nuevo_offset=nuevo_offset,
+        )
 
     def _ir_a_pagina(self, pagina: int):
         """Salta a la página indicada (1-based) respetando los límites."""
@@ -451,6 +437,54 @@ class CartillaTercerosPage(ft.Column):
     def _mostrar_loader(self, visible: bool):
         loader_row_visibilidad(self._page, self.loader, visible)
 
+    def _set_acciones_ocupadas(self, ocupado: bool, texto_loader: str = "Cargando terceros...") -> None:
+        """Bloquea acciones y muestra loader para evitar doble interacción durante operaciones de BD."""
+        self.search_field.disabled = ocupado
+        self.nav_row.controls[0].disabled = ocupado
+        self.nav_row.controls[2].disabled = ocupado
+        self.boton_toggle.disabled = ocupado
+        for ctrl in self.herramientas_row.controls:
+            ctrl.disabled = ocupado
+        loader_row_visibilidad(self._page, self.loader, ocupado, texto_loader)
+
+    def _cargar_terceros_en_background(
+        self,
+        *,
+        texto: str,
+        texto_loader: str,
+        mensaje_error: str,
+        mostrar_mensaje_sin_datos: bool = False,
+        nuevo_offset: int | None = None,
+    ) -> None:
+        """Carga terceros en hilo de fondo manteniendo loader visible y UI no bloqueante."""
+        self._set_acciones_ocupadas(True, texto_loader)
+        offset_anterior = self.offset
+        if nuevo_offset is not None:
+            self.offset = nuevo_offset
+
+        def _worker():
+            datos, total, error = [], 0, None
+            try:
+                datos, total = self._consultar_terceros(texto)
+            except Exception as ex:
+                error = str(ex)
+
+            def _ui():
+                if error:
+                    self.offset = offset_anterior
+                    self.terceros = []
+                    self.mostrar_mensaje(f"{mensaje_error}: {error}", 8888)
+                else:
+                    if mostrar_mensaje_sin_datos and not datos:
+                        self.mostrar_mensaje("No se encontraron terceros.", 8888)
+                    self._actualizar_estado_terceros(datos, total)
+                    self._actualizar_tabla()
+                self._set_acciones_ocupadas(False)
+
+            ejecutar_en_ui(self._page, _ui)
+
+        self._page.run_thread(_worker)
+
     def mostrar_mensaje(self, texto, duration, tercero=None, color=None, on_dismiss=None):
         """
         Muestra un mensaje con SnackBar vía show_dialog.
@@ -460,14 +494,7 @@ class CartillaTercerosPage(ft.Column):
         if tercero:
 
             def on_confirm(_e):
-                r = self._terceros_uc.eliminar_tercero(tercero)
-                self.cargar_terceros()
-                if r is False:
-                    mostrar_mensaje(
-                        self._page,
-                        "No se pudo eliminar el tercero. Verifique que no esté acumulado",
-                        8888,
-                    )
+                self._eliminar_tercero_en_background(tercero)
 
             mostrar_mensaje(
                 self._page,
@@ -480,6 +507,34 @@ class CartillaTercerosPage(ft.Column):
         else:
             mostrar_mensaje(self._page, texto, duration, color=color, on_dismiss=on_dismiss)
 
+    def _eliminar_tercero_en_background(self, tercero: str) -> None:
+        """Ejecuta eliminación de tercero en background con carga visible."""
+        self._set_acciones_ocupadas(True, "Eliminando tercero...")
+
+        def _worker():
+            resultado, error = False, None
+            try:
+                resultado = self._terceros_uc.eliminar_tercero(tercero)
+            except Exception as ex:
+                error = str(ex)
+
+            def _ui():
+                self._set_acciones_ocupadas(False)
+                if error:
+                    self.mostrar_mensaje(f"Error eliminando tercero: {error}", 8888)
+                    return
+                if resultado is False:
+                    self.mostrar_mensaje(
+                        "No se pudo eliminar el tercero. Verifique que no esté acumulado",
+                        8888,
+                    )
+                    return
+                self.cargar_terceros()
+
+            ejecutar_en_ui(self._page, _ui)
+
+        self._page.run_thread(_worker)
+
     def _buscar_tercero(self, e: ft.ControlEvent):
         ft.context.disable_auto_update()
         if self._buscar_handle is not None:
@@ -490,15 +545,11 @@ class CartillaTercerosPage(ft.Column):
         self._buscar_handle = loop.call_later(0.35, lambda: self._buscar_ejecutar(texto))
 
     def _buscar_ejecutar(self, texto: str):
-        self._mostrar_loader(True)
-        try:
-            datos, total = self._consultar_terceros(texto)
-            self._actualizar_estado_terceros(datos, total)
-            self._actualizar_tabla()
-        except Exception as ex:
-            self._mostrar_mensaje(f"Error buscando: {ex}", True)
-        finally:
-            self._mostrar_loader(False)
+        self._cargar_terceros_en_background(
+            texto=texto,
+            texto_loader="Buscando terceros...",
+            mensaje_error="Error buscando",
+        )
 
     def _crear_accion_dividir(self, identidad, tt_ctrl_fila):
         chk = ft.Checkbox(
