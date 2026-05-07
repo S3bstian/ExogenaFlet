@@ -100,11 +100,11 @@ def _unificar_tipo_t(setsdatos: List[SetDatosRow]) -> Tuple[List[SetDatosRow], D
             info[identidad] = {
                 "cantidad": len(filas),
                 "valores_antes": {
-                    "saldoinicial": [f[idx] for f in filas for idx in [13]],
-                    "debitos": [f[idx] for f in filas for idx in [14]],
-                    "creditos": [f[idx] for f in filas for idx in [15]],
-                    "neto": [f[idx] for f in filas for idx in [16]],
-                    "saldofinal": [f[idx] for f in filas for idx in [17]],
+                    "saldoinicial": [fila[13] for fila in filas],
+                    "debitos": [fila[14] for fila in filas],
+                    "creditos": [fila[15] for fila in filas],
+                    "neto": [fila[16] for fila in filas],
+                    "saldofinal": [fila[17] for fila in filas],
                 },
             }
         base = list(filas[0])
@@ -125,7 +125,7 @@ def _unificar_tipo_b(setsdatos: List[SetDatosRow]) -> Tuple[List[SetDatosRow], D
         if len(filas) > 1:
             info[identidad] = {
                 "cantidad": len(filas),
-                "valores_antes": {"saldo": [f[3] for f in filas]},
+                "valores_antes": {"saldo": [fila[3] for fila in filas]},
             }
         base = list(filas[0])
         base[3] = 0
@@ -145,10 +145,10 @@ def _unificar_tipo_a(setsdatos: List[SetDatosRow]) -> Tuple[List[SetDatosRow], D
             info[identidad] = {
                 "cantidad": len(filas),
                 "valores_antes": {
-                    "SaldoInicial": [f[idx] for f in filas for idx in [4]],
-                    "Debitos": [f[idx] for f in filas for idx in [5]],
-                    "Creditos": [f[idx] for f in filas for idx in [6]],
-                    "SaldoFinal": [f[idx] for f in filas for idx in [7]],
+                    "SaldoInicial": [fila[4] for fila in filas],
+                    "Debitos": [fila[5] for fila in filas],
+                    "Creditos": [fila[6] for fila in filas],
+                    "SaldoFinal": [fila[7] for fila in filas],
                 },
             }
         base = list(filas[0])
@@ -1261,52 +1261,7 @@ def acumular_conceptos_hoja_trabajo(
     bottom_text: Any,
     cancel_event: Optional[Event] = None,
 ) -> ResultadoAcumulacion:
-    """
-    Acumula datos de conceptos en la hoja de trabajo.
-    
-    Procesa múltiples conceptos, obteniendo elementos, atributos y datos relacionados
-    para insertarlos en la hoja de trabajo. Protegido contra ejecuciones simultáneas
-    y con transacción atómica.
-    
-    Parameters
-    ----------
-    conceptos : List[Dict[str, Any]]
-        Lista de diccionarios con información de conceptos. Cada concepto debe tener:
-        - 'id': ID del concepto
-        - 'codigo': Código del concepto
-    loader : Any
-        Control de progreso de Flet (ft.ProgressRing o similar) para mostrar avance.
-    page : Any
-        Página de Flet (ft.Page) para actualizar la UI.
-    bottom_text : Any
-        Control de texto de Flet (ft.Text) para mostrar mensajes de progreso.
-    cancel_event : Optional[Event]
-        Si se establece (is_set), se aborta en preparación o entre pasos del concepto y se revierte
-        toda la transacción (incluidos los DELETE previos a insertar).
-    
-    Returns
-    -------
-    ResultadoAcumulacion
-        Estado detallado (inserciones, advertencias por cuenta sin datos, errores, cancelación).
-    
-    Raises
-    ------
-    ConnectionError
-        Si no se puede conectar a la base de datos.
-    ValueError
-        Si no hay empresa seleccionada en session.EMPRESA_ACTUAL.
-    
-    Notes
-    -----
-    Esta función es muy compleja y procesa múltiples tipos de elementos:
-    - Tipo 'T': Terceros con movimientos
-    - Tipo 'C': Cuentas
-    - Tipo 'B': Bancos
-    - Tipo 'A': Activos fijos
-    
-    La función usa whitelist para nombres de tablas dinámicas para prevenir
-    inyecciones SQL en queries que construyen nombres de tablas.
-    """
+    """Orquesta la acumulación completa en una transacción, con cancelación y salida estructurada."""
     LOG_MAX_INSERTS_DETALLE = 3
     LOG_MAX_SETS_DETALLE = 2
 

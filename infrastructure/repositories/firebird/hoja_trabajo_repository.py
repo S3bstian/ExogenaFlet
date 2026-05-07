@@ -145,7 +145,7 @@ def _solo_conceptos_desde_hoja(cur: Any) -> List[ConceptoLegacyMap]:
         """
     )
     rows = cur.fetchall()
-    return [{"codigo": r[0], "formato": r[1]} for r in rows]
+    return [{"codigo": row[0], "formato": row[1]} for row in rows]
 
 
 def _registros_ui_desde_grupos_hoja(groups: List[Any]) -> Dict[str, dict]:
@@ -155,9 +155,9 @@ def _registros_ui_desde_grupos_hoja(groups: List[Any]) -> Dict[str, dict]:
         clave = grupo["group_key"]
         identidad = grupo["identidad"]
         registro_agrupado: Dict[str, Any] = {}
-        for r in grupo["rows"]:
-            descripcion = r[5]
-            valor = r[7]
+        for row in grupo["rows"]:
+            descripcion = row[5]
+            valor = row[7]
             if descripcion != "Número de Identificación":
                 registro_agrupado[descripcion] = valor or ""
         registro_agrupado["FORMATO"] = grupo["rows"][0][6]
@@ -257,9 +257,9 @@ def _consultar_hoja_paginada_en_cursor(
     rows = cur.fetchall()
     groups = agrupar_filas_hoja(
         rows,
-        get_id=lambda r: r[0],
-        get_id_concepto=lambda r: r[1],
-        get_identidad=lambda r: r[8],
+        get_id=lambda row: row[0],
+        get_id_concepto=lambda row: row[1],
+        get_identidad=lambda row: row[8],
     )
     resultado = _registros_ui_desde_grupos_hoja(groups)
     return (resultado, has_more, total_identidades)
@@ -301,6 +301,24 @@ def _resolver_concepto_y_elemento_entrada(
     if not row:
         return None
     return int(row[0]), int(row[1])
+
+
+def _resolver_id_concepto_para_undo(
+    legacy_concepto: Any,
+    mensaje_tipo_invalido: str = "Concepto debe ser un diccionario con 'codigo' y 'formato'",
+) -> Union[int, str]:
+    """
+    Resuelve el ID de concepto para operaciones de deshacer.
+    Retorna mensaje de error (str) cuando el concepto no es válido o no existe.
+    """
+    if not isinstance(legacy_concepto, dict) or "codigo" not in legacy_concepto or "formato" not in legacy_concepto:
+        return mensaje_tipo_invalido
+    concepto_codigo = legacy_concepto["codigo"]
+    formato_codigo = legacy_concepto["formato"]
+    id_concepto = consultar_id_concepto(concepto_codigo, formato_codigo)
+    if id_concepto is None:
+        return f"Concepto no encontrado: {concepto_codigo} - {formato_codigo}"
+    return id_concepto
 
 
 def _actualizar_valor_entrada_por_descripcion(
@@ -463,8 +481,8 @@ class FirebirdHojaTrabajoRepository:
                 return "Clave de destino inválida."
 
             identidades: List[str] = []
-            for c in claves:
-                id_c, ident = _parsear_clave(c)
+            for clave_grupo in claves:
+                id_c, ident = _parsear_clave(clave_grupo)
                 if id_c != id_concepto:
                     return "Todas las filas deben ser del mismo concepto."
                 identidades.append(ident)
@@ -725,8 +743,8 @@ class FirebirdHojaTrabajoRepository:
                             """,
                             (id_concepto, attr_id, cc_identidad),
                         )
-                        r = cur.fetchone()
-                        base = _to_float(r[0]) if r else 0.0
+                        row_valor_actual = cur.fetchone()
+                        base = _to_float(row_valor_actual[0]) if row_valor_actual else 0.0
                         nuevo = base + total
                         cur.execute(
                             """
@@ -788,15 +806,12 @@ class FirebirdHojaTrabajoRepository:
 
     def deshacer_agrupar_cuantias(self, concepto: ConceptoRef) -> str:
         legacy_concepto = self._legacy_concepto(concepto)
-        if not isinstance(legacy_concepto, dict) or "codigo" not in legacy_concepto or "formato" not in legacy_concepto:
-            return "Concepto debe ser un diccionario con 'codigo' y 'formato'"
+        id_concepto_o_error = _resolver_id_concepto_para_undo(legacy_concepto)
+        if isinstance(id_concepto_o_error, str):
+            return id_concepto_o_error
+        id_concepto = id_concepto_o_error
         try:
             with transaccion_segura() as (_con, cur):
-                id_concepto = consultar_id_concepto(
-                    legacy_concepto["codigo"], legacy_concepto["formato"]
-                )
-                if id_concepto is None:
-                    return f"Concepto no encontrado: {legacy_concepto['codigo']} - {legacy_concepto['formato']}"
                 registros = fetch_undo_registros_por_tipo(cur, 0, id_concepto)
                 if not registros:
                     return "No hay agrupaciones para deshacer en este concepto."
@@ -1073,15 +1088,12 @@ class FirebirdHojaTrabajoRepository:
 
     def deshacer_numerar_nits(self, concepto: ConceptoRef) -> str:
         legacy_concepto = self._legacy_concepto(concepto)
-        if not isinstance(legacy_concepto, dict) or "codigo" not in legacy_concepto or "formato" not in legacy_concepto:
-            return "Concepto debe ser un diccionario con 'codigo' y 'formato'"
+        id_concepto_o_error = _resolver_id_concepto_para_undo(legacy_concepto)
+        if isinstance(id_concepto_o_error, str):
+            return id_concepto_o_error
+        id_concepto = id_concepto_o_error
         try:
             with transaccion_segura() as (_con, cur):
-                id_concepto = consultar_id_concepto(
-                    legacy_concepto["codigo"], legacy_concepto["formato"]
-                )
-                if id_concepto is None:
-                    return f"Concepto no encontrado: {legacy_concepto['codigo']} - {legacy_concepto['formato']}"
                 registros = fetch_undo_registros_por_tipo(cur, 1, id_concepto)
                 if not registros:
                     return "No hay numeraciones para deshacer en este concepto."
@@ -1097,11 +1109,11 @@ class FirebirdHojaTrabajoRepository:
                     ids_tdoc_str = _ids_csv(ids_tdoc)
                     ids_atr_ident_str = _ids_csv(ids_atr_ident)
 
-                    for i, it in enumerate(items):
-                        ant = (it.get("ant") or "").strip()
-                        razon = it.get("razon") or ""
-                        ident_val = (it.get("ident_val") or ant).strip()
-                        nueva = f"{base_solo}{contador_ini + i:03d}"
+                    for index, item in enumerate(items):
+                        ant = (item.get("ant") or "").strip()
+                        razon = item.get("razon") or ""
+                        ident_val = (item.get("ident_val") or ant).strip()
+                        nueva = f"{base_solo}{contador_ini + index:03d}"
                         nueva_padded = nueva.ljust(20)
                         ant_padded = ant.ljust(20)
 
@@ -1132,15 +1144,12 @@ class FirebirdHojaTrabajoRepository:
 
     def deshacer_unificar(self, concepto: ConceptoRef) -> str:
         legacy_concepto = self._legacy_concepto(concepto)
-        if not isinstance(legacy_concepto, dict) or "codigo" not in legacy_concepto or "formato" not in legacy_concepto:
-            return "Concepto debe ser un diccionario con 'codigo' y 'formato'"
+        id_concepto_o_error = _resolver_id_concepto_para_undo(legacy_concepto)
+        if isinstance(id_concepto_o_error, str):
+            return id_concepto_o_error
+        id_concepto = id_concepto_o_error
         try:
             with transaccion_segura() as (_con, cur):
-                id_concepto = consultar_id_concepto(
-                    legacy_concepto["codigo"], legacy_concepto["formato"]
-                )
-                if id_concepto is None:
-                    return f"Concepto no encontrado: {legacy_concepto['codigo']} - {legacy_concepto['formato']}"
                 registros = fetch_undo_registros_por_tipo(cur, 2, id_concepto)
                 if not registros:
                     return "No hay unificaciones para deshacer en este concepto."

@@ -104,25 +104,29 @@ def columnas_valor_concepto(
     Nombres de columna (descripción visible) para las clases indicadas.
     Por defecto incluye solo CLASE=1 (valor/monto).
     """
-    c = _concepto_a_dict(concepto)
-    if not c:
+    concepto_dict = _concepto_a_dict(concepto)
+    if not concepto_dict:
         return set()
-    out = set()
-    for a in formatos_uc.obtener_atributos_por_concepto(
-        {"codigo": str(c["codigo"]), "formato": str(c["formato"])}
+    columnas_valor = set()
+    for atributo in formatos_uc.obtener_atributos_por_concepto(
+        {"codigo": str(concepto_dict["codigo"]), "formato": str(concepto_dict["formato"])}
     ):
-        if len(a) < 4:
+        if len(atributo) < 4:
             continue
         try:
-            clase = int(a[3]) if a[3] is not None and str(a[3]).strip() != "" else None
+            clase = (
+                int(atributo[3])
+                if atributo[3] is not None and str(atributo[3]).strip() != ""
+                else None
+            )
         except (TypeError, ValueError):
             clase = None
         if clase not in clases:
             continue
-        d = (a[2] or "").strip()
-        if d:
-            out.add(d)
-    return out
+        descripcion = (atributo[2] or "").strip()
+        if descripcion:
+            columnas_valor.add(descripcion)
+    return columnas_valor
 
 
 def _titulo_normalizado(titulo: str) -> str:
@@ -216,28 +220,35 @@ def construir_esquema(
     - set de columnas CLASE=1 (alineación y formato monetario de celda).
     """
     presentes = set()
-    for r in datos.values():
+    for registro in datos.values():
         presentes.update(
-            k
-            for k in r.keys()
-            if k.lower() not in _NO_VISIBLES_ESQUEMA
-            and not any(s in str(k or "").upper() for s in _OCULTAR_SUBSTRINGS_ESQUEMA)
+            clave
+            for clave in registro.keys()
+            if clave.lower() not in _NO_VISIBLES_ESQUEMA
+            and not any(
+                substring in str(clave or "").upper()
+                for substring in _OCULTAR_SUBSTRINGS_ESQUEMA
+            )
         )
 
     ordenadas = []
     attrs = []
     c_payload = _concepto_a_dict(concepto_actual)
     if c_payload:
-        c = {"codigo": str(c_payload["codigo"]), "formato": str(c_payload["formato"])}
+        concepto_ref = {"codigo": str(c_payload["codigo"]), "formato": str(c_payload["formato"])}
         # Ordenamos atributos por ID (a[0]) para respetar el orden definido en la matriz del concepto
         attrs = sorted(
-            formatos_uc.obtener_atributos_por_concepto(c),
-            key=lambda a: int(a[0]) if isinstance(a[0], (int, float)) or str(a[0]).isdigit() else 0,
+            formatos_uc.obtener_atributos_por_concepto(concepto_ref),
+            key=lambda atributo: (
+                int(atributo[0])
+                if isinstance(atributo[0], (int, float)) or str(atributo[0]).isdigit()
+                else 0
+            ),
         )
-        for a in attrs:
-            d = (a[2] or "").strip()  # DESCRIPCION visible de la columna en hoja de trabajo
-            if d and d in presentes:  # Solo incluimos columnas que realmente existen en los datos cargados
-                ordenadas.append(d)
+        for atributo in attrs:
+            descripcion = (atributo[2] or "").strip()  # DESCRIPCION visible de la columna en hoja de trabajo
+            if descripcion and descripcion in presentes:  # Solo incluimos columnas que realmente existen en los datos cargados
+                ordenadas.append(descripcion)
 
     if not ordenadas:
         ordenadas = sorted(presentes)  # Fallback: si no hay definición de concepto, usar orden alfabético

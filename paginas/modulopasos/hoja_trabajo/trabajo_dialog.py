@@ -18,22 +18,6 @@ from paginas.modulopasos.cartilla_terceros.herramientas_tercero import TerceroDi
 from utils.ui_sync import loader_row_fin, loader_row_trabajo, loader_row_visibilidad
 
 
-# def _label_sin_conjuncion_huerfana(label: str) -> str:
-#     """
-#     La etiqueta del TextField se envuelve al ancho del control; el salto puede separar
-#     conjunciones de una letra (o, y, e) de la palabra siguiente. NBSP evita ese corte.
-#     """
-#     if not label:
-#         return label
-#     # (^|\s) evita look-behind de ancho variable. NBSP fuera del template (re.sub no acepta \u ahí).
-#     _nbsp = "\u00a0"
-
-#     def _repl(m: re.Match) -> str:
-#         return m.group(1) + m.group(2) + _nbsp
-
-#     return re.sub(r"(^|\s)([oOyYeE])\s+(?=\S)", _repl, label)
-
-
 class TrabajoDialog:
     """
     Diálogo de hoja de trabajo. `abrir(modo=...)` recibe un string: "nuevo", "editar",
@@ -1717,7 +1701,7 @@ class TrabajoDialog:
         atributos CLASE=0 del concepto. Solo incluye campos con valor real.
         """
         excluir_fijos = {"Concepto", "FORMATO", "id_concepto"}
-        out: list[tuple[str, str]] = []
+        resumen_campos: list[tuple[str, str]] = []
         def _norm(s: object) -> str:
             return str(s or "").strip().upper()
 
@@ -1767,14 +1751,14 @@ class TrabajoDialog:
                 continue
 
             etiqueta = clase_cero_por_norm.get(clave_norm, clave_txt)
-            out.append((etiqueta, valor_txt))
+            resumen_campos.append((etiqueta, valor_txt))
 
         # Deduplicar por etiqueta final y ordenar por el orden natural del concepto.
-        dedup: dict[str, str] = {}
-        for k, v in out:
-            dedup[k] = v
+        deduplicados_por_etiqueta: dict[str, str] = {}
+        for etiqueta, valor in resumen_campos:
+            deduplicados_por_etiqueta[etiqueta] = valor
         return sorted(
-            dedup.items(),
+            deduplicados_por_etiqueta.items(),
             key=lambda kv: (orden_norm.get(_norm(kv[0]), 10_000), _norm(kv[0])),
         )
 
@@ -1923,7 +1907,11 @@ class TrabajoDialog:
             return
 
         pais_key = self._key_from_label(pais_label)
-        deps_iter = [(k, v[0]) for k, v in DEPARTAMENTOS.items() if str(v[1]) == str(pais_key)]
+        deps_iter = [
+            (codigo_departamento, datos_departamento[0])
+            for codigo_departamento, datos_departamento in DEPARTAMENTOS.items()
+            if str(datos_departamento[1]) == str(pais_key)
+        ]
         valor_actual_depto = self._valor_actual_attr_tercero("departamento")
         opciones, selected_value = self._opciones_y_seleccion_desde_items(deps_iter, valor_actual_depto)
         self.drop_dep.options = opciones
@@ -1939,8 +1927,10 @@ class TrabajoDialog:
         dept_key = self._key_from_label(dept_label)
         dept_key_int = int(dept_key) if str(dept_key).isdigit() else None
         muns_iter = [
-            (v[0], v[1]) for _, v in MUNICIPIOS.items()
-            if (dept_key_int and int(v[2]) == dept_key_int) or str(v[2]) == str(dept_key)
+            (datos_municipio[0], datos_municipio[1])
+            for _, datos_municipio in MUNICIPIOS.items()
+            if (dept_key_int and int(datos_municipio[2]) == dept_key_int)
+            or str(datos_municipio[2]) == str(dept_key)
         ]
         valor_actual_muni = self._valor_actual_attr_tercero("municipio")
         opciones, selected_value = self._opciones_y_seleccion_desde_items(muns_iter, valor_actual_muni)

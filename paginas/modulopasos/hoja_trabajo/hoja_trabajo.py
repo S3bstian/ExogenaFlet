@@ -653,10 +653,10 @@ class HojaTrabajoPage(ft.Column):
             celdas = [
                 ft.DataCell(
                     self._contenido_celda(
-                        c, fila, registro, encabezados, indices_valor, borde_identidad
+                        col_idx, fila, registro, encabezados, indices_valor, borde_identidad
                     )
                 )
-                for c in range(num_cols)
+                for col_idx in range(num_cols)
             ]
             filas_nuevas.append(ft.DataRow(cells=celdas))
         self.table.rows = filas_nuevas
