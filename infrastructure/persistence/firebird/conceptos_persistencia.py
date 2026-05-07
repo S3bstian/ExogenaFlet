@@ -1,35 +1,55 @@
-"""
-Consultas Firebird compartidas sobre CONCEPTOS + FORMATOS.
-
-Centraliza consultas de concepto (listado paginado e ID por código+formato)
-usadas por repositorios y `hoja_trabajo_persistencia`.
-"""
+"""Consultas compartidas sobre CONCEPTOS y FORMATOS (listado paginado e ID por código+formato)."""
 from typing import Any, Dict, List, Optional, Tuple
 
-from infrastructure.adapters.helisa_firebird import CNX_BDHelisa
 from core import session
+from infrastructure.adapters.helisa_firebird import CNX_BDHelisa
 
 
-def consultar_conceptos_paginados(
-    *,
-    offset: int = 0,
-    limit: int = 20,
-    filtro: Optional[str] = None,
-) -> Tuple[List[Dict[str, str]], int]:
+def _notificar_error(operacion: str, cause: BaseException) -> None:
+    print(f"CONCEPTOS ({operacion}): {cause}")
+
+
+def _codigo_empresa_sesion() -> int:
+    return session.EMPRESA_ACTUAL["codigo"]
+
+
+def _fila_concepto_a_dict(fila: tuple) -> Dict[str, str]:
+    (
+        id_concepto,
+        codigo,
+        formato,
+        descripcion,
+        literal,
+        cc_mm_id,
+        cc_mm_nombre,
+        cc_mm_valor,
+        ext_id,
+        ext_nombre,
+        activo,
+    ) = fila
+    return {
+        "id": str(id_concepto).strip() if id_concepto else "",
+        "codigo": codigo.strip() if codigo else "",
+        "formato": formato.strip() if formato else "",
+        "descripcion": descripcion.strip() if descripcion else "",
+        "literal": literal.strip() if literal else "",
+        "cc_mm_identidad": cc_mm_id.strip() if cc_mm_id else "",
+        "cc_mm_nombre": cc_mm_nombre.strip() if cc_mm_nombre else "",
+        "cc_mm_valor": str(cc_mm_valor).strip() if cc_mm_valor else "",
+        "exterior_identidad": ext_id.strip() if ext_id else "",
+        "exterior_nombre": ext_nombre.strip() if ext_nombre else "",
+        "activo": activo.strip() if activo else "",
+    }
+
+
+def _sql_y_params_conteo_y_lista(
+    filtro: Optional[str], offset: int, limit: int
+) -> Tuple[str, List[Any], str, List[Any]]:
+    base_from = """
+        FROM CONCEPTOS c
+        LEFT JOIN FORMATOS f ON c.IdFormato = f.Id
     """
-    Lista conceptos con formato asociado, paginada, con conteo total bajo el mismo filtro.
-
-    Retorna ([], 0) ante error de conexión o consulta.
-    """
-    if offset < 0 or limit < 0:
-        raise ValueError("offset y limit deben ser valores no negativos")
-
-    total = 0
-    try:
-        con = CNX_BDHelisa("EX", session.EMPRESA_ACTUAL["codigo"], "sysdba")
-        cur = con.cursor()
-
-        sql = """
+    select_cols = """
             SELECT FIRST ? SKIP ?
                     c.Id,
                     c.Codigo,
@@ -42,80 +62,62 @@ def consultar_conceptos_paginados(
                     c.Exterior_identidad,
                     c.Exterior_Nombre,
                     c.Activo
-            FROM CONCEPTOS c
-            LEFT JOIN FORMATOS f ON c.IdFormato = f.Id
+    """
+    sql_lista = select_cols + base_from
+    sql_total = "SELECT COUNT(*) " + base_from
+    params_lista: List[Any] = [limit, offset]
+    params_total: List[Any] = []
+
+    if filtro:
+        patron = f"%{filtro}%"
+        where = """
+            WHERE UPPER(c.Codigo) LIKE UPPER(?)
+               OR UPPER(f.Formato) LIKE UPPER(?)
+               OR UPPER(c.Descripcion) LIKE UPPER(?)
         """
+        sql_lista += where
+        sql_total += where
+        params_lista.extend([patron, patron, patron])
+        params_total.extend([patron, patron, patron])
 
-        params: List[Any] = [limit, offset]
+    sql_lista += " ORDER BY c.codigo, f.formato, c.Descripcion"
+    return sql_total, params_total, sql_lista, params_lista
 
-        if filtro:
-            filtro_param = f"%{filtro}%"
-            sql += """
-                WHERE UPPER(c.Codigo) LIKE UPPER(?)
-                   OR UPPER(f.Formato) LIKE UPPER(?)
-                   OR UPPER(c.Descripcion) LIKE UPPER(?)
-            """
-            params.extend([filtro_param, filtro_param, filtro_param])
 
-        sql += " ORDER BY c.codigo, f.formato, c.Descripcion"
+def consultar_conceptos_paginados(
+    *,
+    offset: int = 0,
+    limit: int = 20,
+    filtro: Optional[str] = None,
+) -> Tuple[List[Dict[str, str]], int]:
+    if offset < 0 or limit < 0:
+        raise ValueError("offset y limit deben ser valores no negativos")
 
-        sql_total = """
-            SELECT COUNT(*)
-            FROM CONCEPTOS c
-            LEFT JOIN FORMATOS f ON c.IdFormato = f.Id
-        """
-        params_total: List[Any] = []
-        if filtro:
-            filtro_param = f"%{filtro}%"
-            sql_total += """
-                WHERE UPPER(c.Codigo) LIKE UPPER(?)
-                   OR UPPER(f.Formato) LIKE UPPER(?)
-                   OR UPPER(c.Descripcion) LIKE UPPER(?)
-            """
-            params_total.extend([filtro_param, filtro_param, filtro_param])
-
-        cur.execute(sql_total, tuple(params_total))
-        row_total = cur.fetchone()
-        total = int(row_total[0]) if row_total and row_total[0] is not None else 0
-
-        cur.execute(sql, params)
-        rows = cur.fetchall()
-        cur.close()
-        con.close()
-    except Exception as e:
-        print(f"[ERROR] Error al obtener los conceptos: {str(e)}")
+    try:
+        conexion = CNX_BDHelisa("EX", _codigo_empresa_sesion(), "sysdba")
+        cursor = conexion.cursor()
+        sql_total, params_total, sql_lista, params_lista = _sql_y_params_conteo_y_lista(
+            filtro, offset, limit
+        )
+        cursor.execute(sql_total, tuple(params_total))
+        fila_total = cursor.fetchone()
+        total = int(fila_total[0]) if fila_total and fila_total[0] is not None else 0
+        cursor.execute(sql_lista, params_lista)
+        filas = cursor.fetchall()
+        cursor.close()
+        conexion.close()
+    except Exception as exc:
+        _notificar_error("listado paginado", exc)
         return [], 0
 
-    conceptos: List[Dict[str, str]] = []
-    for r in rows:
-        conceptos.append(
-            {
-                "id": str(r[0]).strip() if r[0] else "",
-                "codigo": r[1].strip() if r[1] else "",
-                "formato": r[2].strip() if r[2] else "",
-                "descripcion": r[3].strip() if r[3] else "",
-                "literal": r[4].strip() if r[4] else "",
-                "cc_mm_identidad": r[5].strip() if r[5] else "",
-                "cc_mm_nombre": r[6].strip() if r[6] else "",
-                "cc_mm_valor": str(r[7]).strip() if r[7] else "",
-                "exterior_identidad": r[8].strip() if r[8] else "",
-                "exterior_nombre": r[9].strip() if r[9] else "",
-                "activo": r[10].strip() if r[10] else "",
-            }
-        )
-    return conceptos, total
+    return [_fila_concepto_a_dict(fila) for fila in filas], total
 
 
 def consultar_id_concepto(codigo: str, formato: str) -> Optional[int]:
-    """
-    Resuelve el ID numérico de CONCEPTOS para un par código + código de formato.
-
-    Retorna None si no existe fila o ante error de conexión/consulta.
-    """
     try:
-        con = CNX_BDHelisa("EX", session.EMPRESA_ACTUAL["codigo"], "sysdba")
-        cur = con.cursor()
-        cur.execute(
+        conexion = CNX_BDHelisa("EX", _codigo_empresa_sesion(), "sysdba")
+        cursor = conexion.cursor()
+        cursor.execute(
             """
             SELECT c.Id
             FROM CONCEPTOS c
@@ -124,10 +126,10 @@ def consultar_id_concepto(codigo: str, formato: str) -> Optional[int]:
             """,
             (codigo, formato),
         )
-        row = cur.fetchone()
-        cur.close()
-        con.close()
-        return int(row[0]) if row else None
-    except Exception as e:
-        print(f"[ERROR] Error obteniendo ID de concepto {codigo} - {formato}: {e}")
+        fila = cursor.fetchone()
+        cursor.close()
+        conexion.close()
+        return int(fila[0]) if fila else None
+    except Exception as exc:
+        _notificar_error(f"id por código={codigo} formato={formato}", exc)
         return None

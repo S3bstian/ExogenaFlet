@@ -133,8 +133,8 @@ class WindowsLicenciamientoRepository:
         if not crudo:
             return []
         items = []
-        for x in crudo.split(","):
-            token = str(x).strip()
+        for item_crudo in crudo.split(","):
+            token = str(item_crudo).strip()
             if not token:
                 continue
             if ":" in token:

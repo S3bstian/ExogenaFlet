@@ -12,228 +12,35 @@ Cómo se usa: ejecutar este módulo (`python main.py`) o `ft.run(main)` desde ot
 
 import asyncio
 import time
+from typing import Any
+
 import flet as ft
-from paginas.herramientas.herramientas import HerramientasDialog
 from paginas.cambioContra import CambioContraDialog
+from paginas.herramientas.herramientas import HerramientasDialog
 
 from core import session
-from core.settings import PERIODO
 from composition.app_container import AppContainer
-from ui.colors import FONDO_PAGINA, WHITE, PINK_50, PINK_200, PINK_800, PINK_600, GREY_700
-from ui.theme import tema_aplicacion
-from ui.progress import crear_loader_row, SIZE_SMALL
+from core.settings import PERIODO
 from ui.buttons import BOTON_PRINCIPAL, BOTON_SECUNDARIO, BOTON_SUBLISTA
+from ui.colors import FONDO_PAGINA, PINK_50, PINK_200, PINK_600, WHITE
 from ui.fields import creador_campo_texto
-from utils.paths import IMG_PATH
+from ui.progress import SIZE_SMALL, crear_loader_row
+from ui.theme import tema_aplicacion
 from routing import (
     get_appbar_content,
-    update_topbar,
     parent_route_for_back,
     resolve_route,
+    update_topbar,
 )
-from paginas.utils.banner_prefijo_ctrl import crear_banner_prefijo_ctrl, sync_banner_prefijo
+from utils.paths import IMG_PATH
 from paginas.licenciamiento.primera_ejecucion import (
     ejecutar_si_corresponde,
 )
+from paginas.utils.banner_prefijo_ctrl import crear_banner_prefijo_ctrl, sync_banner_prefijo
 
 
-# Clase app
-class MagneticosApp:
-    def __init__(self, page):
-        """Define `page`, el contenedor de casos de uso (`AppContainer`) y la navegación (`route_change`, `view_pop`)."""
-        self.page = page
-        self.container = AppContainer()
-        self._auth_uc = self.container.auth_uc
-        self.periodo = PERIODO
-        self.cambio_contra_dialog = CambioContraDialog(self.page)
-        self.herramientas_dialog = HerramientasDialog(self.page, self.container)
-        self.page.on_route_change = self.route_change
-        self.page.on_view_pop = self.view_pop
-
-        """Definicion de objetos de interfaz o controles flet
-        login_button = boton de iniciar sesion
-        
-        logo_helisa = imagen del logo corporativo
-        
-        msg = mensaje de alerta en la parte inferior
-        
-        appbar = barra horizontal que al iniciar el programa es la ventana principal pero 
-            al interior del mismo se convierte en la barra de navegacion
-            
-        root = contiene lo que se muestra en pantalla
-        """
-        self.login_button = ft.TextButton(content="Iniciar Sesión", on_click=self.login, icon=ft.Icons.SUPERVISED_USER_CIRCLE_OUTLINED, style=BOTON_PRINCIPAL, visible=False)
-        self.logo_helisa = ft.Image(
-            src=IMG_PATH + "/helisa.png",
-            width=600,
-            height=310,
-            fit=ft.BoxFit.CONTAIN,
-        )
-        self.backbutton = ft.OutlinedButton("Atras", icon=ft.Icons.ARROW_BACK_IOS_NEW_SHARP, icon_color=PINK_600, style=BOTON_SECUNDARIO,
-                                            visible=False, on_click=self.view_pop)
-        self.loader_overlay = crear_loader_row("Cargando...", size=SIZE_SMALL)
-        # Mismo control en cada reconstrucción del appbar (Ctrl+dígitos en hoja / cartilla).
-        self._outer_banner_prefijo_appbar, self._txt_banner_prefijo_appbar = crear_banner_prefijo_ctrl(expand=False)
-
-        self.msg = ft.Container(
-            content=ft.Text("", color=ft.Colors.GREY_600, visible=False),
-            bgcolor=FONDO_PAGINA,
-            alignment=ft.Alignment(0, -1),
-        )
-        
-        self.appbar = ft.Container(
-            padding=ft.padding.symmetric(horizontal=12, vertical=6),
-            content=ft.Column([
-                ft.Row(controls=[
-                        self.logo_helisa,
-                        ft.Container(expand=True),
-                        self.backbutton,
-                        self.login_button
-                    ],
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-            ],
-            alignment=ft.MainAxisAlignment.CENTER),
-            height=666,
-            bgcolor=PINK_50,
-            # Permite que el logo de /home (Stack en routing) se pinte fuera del alto fijo del appbar.
-            clip_behavior=ft.ClipBehavior.NONE,
-        )            
-
-    def login(self, e):
-        #crea los controles de campo de texto 
-        usuario = creador_campo_texto("Ingrese su usuario", ["focus"])
-        password = creador_campo_texto("Ingrese su contraseña", ["contraseña"])
-        olvido = ft.TextButton(content="¿Olvidó su contraseña?", style=BOTON_SUBLISTA, icon=ft.Icons.LIVE_HELP_SHARP, on_click=lambda e: self.cambio_contra_dialog.open_dialog())
-
-        def close(_):  # Cierra el diálogo y valida credenciales antes de navegar a /home.
-            # Flet 0.80: TextField usa .error (no .error_text) para el mensaje y borde rojo
-            def set_error(c, msg):
-                if hasattr(c, "error"):
-                    c.error = msg
-                if hasattr(c, "error_text"):
-                    c.error_text = msg
-                if hasattr(c, "update"):
-                    c.update()
-            # Campos vacíos
-            if usuario.value.strip() == "" or password.value.strip() == "":
-                set_error(usuario, "Complete el campo" if not usuario.value.strip() else None)
-                set_error(password, "Complete el campo" if not password.value.strip() else None)
-                self.page.update()
-                return
-            val_usuario = self._auth_uc.autenticar_usuario(
-                usuario.value.strip(), password.value.strip()
-            )
-            if not val_usuario:
-                set_error(usuario, "Verifique sus credenciales")
-                set_error(password, "Verifique sus credenciales")
-                self.page.update()
-                return
-            
-            session.USUARIO_ACTUAL = {"id": val_usuario[0], "nombre": val_usuario[1], "email": ""}
-            self.page.pop_dialog()  # Flet 0.80: reemplaza dialog.open = False
-            self.page.update()
-            asyncio.create_task(self.page.push_route("/home"))
-
-        content_col = ft.Column([usuario, password, olvido], tight=True, spacing=12)
-        dialog = ft.AlertDialog(
-            title=ft.Text("Ingrese sus credenciales.", text_align=ft.TextAlign.CENTER),
-            content=ft.Container(content=content_col, width=320, bgcolor=WHITE),
-            actions=[ft.Button(content="Entrar", on_click=close, style=BOTON_PRINCIPAL)],
-            actions_alignment=ft.MainAxisAlignment.END,
-            bgcolor=WHITE,
-            modal=False,
-            shadow_color=PINK_200,
-            elevation=15,
-            shape=ft.RoundedRectangleBorder(radius=12),
-            scrollable=False,
-        )
-        self.page.show_dialog(dialog)  # Flet 0.80: reemplaza page.open()
-        self.page.update() 
-
-    def _loader_overlay_mostrar(self, mostrar: bool):
-        """Loader en overlay (top-right). Add/remove explícito: visible solo durante transiciones."""
-        if mostrar:
-            if not getattr(self, "_loader_ctn", None) or self._loader_ctn not in self.page.overlay:
-                self._loader_ctn = ft.Container(
-                    content=self.loader_overlay,
-                    top=18,
-                    right=155,
-                    alignment=ft.Alignment(255, 0),
-                )
-                self.page.overlay.append(self._loader_ctn)
-        else:
-            ctn = getattr(self, "_loader_ctn", None)
-            if ctn and ctn in self.page.overlay:
-                self.page.overlay.remove(ctn)
-        self.page.update()
-
-    def route_change(self, e):
-        """Redirige entre vistas usando el registro de rutas. Loader en overlay solo durante transición."""
-        sync_banner_prefijo(self.page, app=self)
-        troute = ft.TemplateRoute(self.page.route)
-        update_topbar(troute, self)
-        res = resolve_route(troute)
-        es_transicion = bool(res) and not troute.match("/")
-        if res:
-            route, h = res
-            if es_transicion:
-                self._loader_overlay_mostrar(True)
-            height, appbar_content = get_appbar_content(h.appbar, self)
-            self.appbar.height = height
-            self.appbar.content = appbar_content
-            self.page.update()
-
-        async def _build_and_navigate():
-            try:
-                await asyncio.sleep(0)
-                if troute.match("/"):
-                    if self.page.views:
-                        self.page.clean()
-                # Una vista por ruta: evita acumular ft.View y controles al navegar (patrón Flet).
-                self.page.views.clear()
-
-                if not res:
-                    asyncio.create_task(self.page.push_route("/"))
-                    return
-
-                content, view_instance = h.build_view(self.page, self)
-                padding = ft.Padding.all(3) if route == "/home/hoja_trabajo" else ft.Padding.all(0)
-                self.page.views.append(
-                    ft.View(
-                        route=route,
-                        controls=[self.appbar, content],
-                        bgcolor=FONDO_PAGINA,
-                        padding=padding,
-                    )
-                )
-                self.page.update()
-                if h.on_enter:
-                    try:
-                        h.on_enter(self.page, view_instance)
-                    except Exception as ex:
-                        print("Error en on_enter:", ex)
-            except Exception as ex:
-                print(ex)
-            finally:
-                if res and es_transicion:
-                    self._loader_overlay_mostrar(False)
-                self.page.update()
-
-        self.page.run_task(_build_and_navigate)
-
-    def view_pop(self, e):
-        """Atrás: subrutas /home/... vuelven a /home (sin depender de la pila de vistas)."""
-        destino = parent_route_for_back(self.page.route)
-        if destino is None:
-            return
-        self._loader_overlay_mostrar(True)
-        asyncio.create_task(self.page.push_route(destino))
-
-def main(page: ft.Page):
-    """Iniciador main, se define la page, se construye la app y se pasa la page a la app"""
-    # Configuración de la página
+def _configurar_pagina_principal(page: ft.Page) -> None:
+    """Aplica configuración visual y de ventana de la aplicación."""
     page.title = "Información Exógena"
     page.window.icon = f"{IMG_PATH}/icono.ico"
     page.window.width = 1024
@@ -246,30 +53,398 @@ def main(page: ft.Page):
     page.theme.page_transitions.windows = "cupertino"
     page.bgcolor = FONDO_PAGINA
 
-    msg = ft.Text("", color=ft.Colors.GREY_600, visible=False)
-    page.add(msg)
+
+def _mostrar_mensaje_arranque(page: ft.Page, mensaje: ft.Text, texto: str) -> None:
+    """Actualiza el mensaje temporal mostrado durante la inicialización."""
+    mensaje.value = texto
+    mensaje.visible = True
+    page.update()
+
+
+def _ocultar_mensaje_arranque(page: ft.Page, mensaje: ft.Text) -> None:
+    """Oculta mensaje de arranque una vez finaliza la inicialización."""
+    mensaje.visible = False
+    page.update()
+
+
+def _finalizar_arranque_en_ruta_inicial(page: ft.Page, app: "InformacionExogenaApp") -> None:
+    """Define la ruta inicial y dispara renderizado de la primera vista."""
+    page.route = "/"
+    app.route_change(None)
+
+
+def _continuar_arranque_inicial(page: ft.Page, app: "InformacionExogenaApp", mensaje_arranque: ft.Text) -> None:
+    """Ejecuta validación de catálogos y navega a la ruta inicial al finalizar."""
+    _mostrar_mensaje_arranque(page, mensaje_arranque, "🔄 Validando bases de datos...")
+    time.sleep(0.5)
+
+    result = app.container.cargar_catalogos_uc.ejecutar()
+    _mostrar_mensaje_arranque(page, mensaje_arranque, result)
+    time.sleep(0.8 if result.startswith("✅") else 300)
+
+    _ocultar_mensaje_arranque(page, mensaje_arranque)
+    _finalizar_arranque_en_ruta_inicial(page, app)
+
+
+class InformacionExogenaApp:
+    def __init__(self, page: ft.Page):
+        """Inicializa página, contenedor de casos de uso y handlers de navegación."""
+        self.page = page
+        self.container = AppContainer()
+        self._auth_uc = self.container.auth_uc
+        self.periodo = PERIODO
+        self.cambio_contra_dialog = CambioContraDialog(self.page)
+        self.herramientas_dialog = HerramientasDialog(self.page, self.container)
+        self._registrar_eventos_pagina()
+        self._crear_controles_base()
+        self._crear_appbar_base()
+
+    def _registrar_eventos_pagina(self) -> None:
+        """Conecta callbacks de navegación de Flet con la app."""
+        self.page.on_route_change = self.route_change
+        self.page.on_view_pop = self.view_pop
+
+    def _crear_controles_base(self) -> None:
+        """Construye controles reutilizables en todas las rutas."""
+        self.msg = ft.Container(
+            content=ft.Text("", color=ft.Colors.GREY_600, visible=False),
+            bgcolor=FONDO_PAGINA,
+            alignment=ft.Alignment(0, -1),
+        )
+        self.login_button = self._crear_boton_login()
+        self.logo_helisa = ft.Image(
+            src=IMG_PATH + "/helisa.png",
+            width=600,
+            height=310,
+            fit=ft.BoxFit.CONTAIN,
+        )
+        self.backbutton = self._crear_boton_atras()
+        self.loader_overlay = crear_loader_row("Cargando...", size=SIZE_SMALL)
+        # Mismo control en cada reconstrucción del appbar (Ctrl+dígitos en hoja / cartilla).
+        self._outer_banner_prefijo_appbar, self._txt_banner_prefijo_appbar = crear_banner_prefijo_ctrl(expand=False)
+
+    def _crear_boton_login(self) -> ft.TextButton:
+        """Construye botón de login con estilo y visibilidad inicial estándar."""
+        return ft.TextButton(
+            content="Iniciar Sesión",
+            on_click=self.login,
+            icon=ft.Icons.SUPERVISED_USER_CIRCLE_OUTLINED,
+            style=BOTON_PRINCIPAL,
+            visible=False,
+        )
+
+    def _crear_boton_atras(self) -> ft.OutlinedButton:
+        """Construye botón de retorno usado en subrutas."""
+        return ft.OutlinedButton(
+            "Atras",
+            icon=ft.Icons.ARROW_BACK_IOS_NEW_SHARP,
+            icon_color=PINK_600,
+            style=BOTON_SECUNDARIO,
+            visible=False,
+            on_click=self.view_pop,
+        )
+
+    def _crear_appbar_base(self) -> None:
+        """Construye el appbar inicial antes de reconfigurarlo por ruta."""
+        self.appbar = ft.Container(
+            padding=ft.padding.symmetric(horizontal=12, vertical=6),
+            content=ft.Column(
+                [self._fila_appbar_base()],
+                alignment=ft.MainAxisAlignment.CENTER,
+            ),
+            height=666,
+            bgcolor=PINK_50,
+            # Permite que el logo de /home (Stack en routing) se pinte fuera del alto fijo del appbar.
+            clip_behavior=ft.ClipBehavior.NONE,
+        )
+
+    def _fila_appbar_base(self) -> ft.Row:
+        """Fila base del appbar reutilizable antes de variar por ruta."""
+        return ft.Row(
+            controls=[
+                self.logo_helisa,
+                ft.Container(expand=True),
+                self.backbutton,
+                self.login_button,
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+    @staticmethod
+    def _set_control_error(control: ft.Control, message: str | None) -> None:
+        """Compatibilidad entre versiones de Flet para mostrar error en campos."""
+        if hasattr(control, "error"):
+            control.error = message
+        if hasattr(control, "error_text"):
+            control.error_text = message
+        if hasattr(control, "update"):
+            control.update()
+
+    @staticmethod
+    def _credenciales_vacias(usuario: ft.TextField, password: ft.TextField) -> bool:
+        """Valida campos obligatorios y marca errores de forma consistente."""
+        usuario_vacio = usuario.value.strip() == ""
+        password_vacio = password.value.strip() == ""
+        if not (usuario_vacio or password_vacio):
+            return False
+
+        InformacionExogenaApp._set_control_error(usuario, "Complete el campo" if usuario_vacio else None)
+        InformacionExogenaApp._set_control_error(password, "Complete el campo" if password_vacio else None)
+        return True
+
+    def _autenticar_credenciales(self, usuario: ft.TextField, password: ft.TextField):
+        """Autentica usuario y devuelve la tupla de sesión o `None`."""
+        return self._auth_uc.autenticar_usuario(
+            usuario.value.strip(),
+            password.value.strip(),
+        )
+
+    def _mostrar_error_credenciales(self, usuario: ft.TextField, password: ft.TextField) -> None:
+        """Informa credenciales inválidas en ambos campos para feedback inmediato."""
+        self._set_control_error(usuario, "Verifique sus credenciales")
+        self._set_control_error(password, "Verifique sus credenciales")
+
+    def _crear_controles_login(self) -> tuple[ft.TextField, ft.TextField, ft.TextButton]:
+        """Construye controles del diálogo de autenticación."""
+        usuario = creador_campo_texto("Ingrese su usuario", ["focus"])
+        password = creador_campo_texto("Ingrese su contraseña", ["contraseña"])
+        olvido = ft.TextButton(
+            content="¿Olvidó su contraseña?",
+            style=BOTON_SUBLISTA,
+            icon=ft.Icons.LIVE_HELP_SHARP,
+            on_click=lambda _evento: self.cambio_contra_dialog.open_dialog(),
+        )
+        return usuario, password, olvido
+
+    def _procesar_login(self, usuario: ft.TextField, password: ft.TextField) -> None:
+        """Valida y autentica credenciales; navega a `/home` en caso exitoso."""
+        if not self._credenciales_validas(usuario, password):
+            return
+
+        val_usuario = self._autenticar_credenciales(usuario, password)
+        if not self._autenticacion_exitosa(usuario, password, val_usuario):
+            return
+        self._completar_login_exitoso(val_usuario)
+
+    def _credenciales_validas(self, usuario: ft.TextField, password: ft.TextField) -> bool:
+        """Valida campos requeridos antes de intentar autenticación."""
+        if not self._credenciales_vacias(usuario, password):
+            return True
+        self.page.update()
+        return False
+
+    def _autenticacion_exitosa(self, usuario: ft.TextField, password: ft.TextField, val_usuario) -> bool:
+        """Muestra feedback cuando falla autenticación y retorna estado final."""
+        if val_usuario:
+            return True
+        self._mostrar_error_credenciales(usuario, password)
+        self.page.update()
+        return False
+
+    def _completar_login_exitoso(self, val_usuario) -> None:
+        """Actualiza sesión y navega al home después de autenticar exitosamente."""
+        session.USUARIO_ACTUAL = {"id": val_usuario[0], "nombre": val_usuario[1], "email": ""}
+        self.page.pop_dialog()  # Flet 0.80: reemplaza dialog.open = False
+        self.page.update()
+        asyncio.create_task(self.page.push_route("/home"))
+
+    def _crear_dialogo_login(
+        self,
+        usuario: ft.TextField,
+        password: ft.TextField,
+        olvido: ft.TextButton,
+    ) -> ft.AlertDialog:
+        """Arma y retorna el AlertDialog de autenticación."""
+        content_col = ft.Column([usuario, password, olvido], tight=True, spacing=12)
+        return ft.AlertDialog(
+            title=ft.Text("Ingrese sus credenciales.", text_align=ft.TextAlign.CENTER),
+            content=ft.Container(content=content_col, width=320, bgcolor=WHITE),
+            actions=[
+                ft.Button(
+                    content="Entrar",
+                    on_click=lambda _evento: self._procesar_login(usuario, password),
+                    style=BOTON_PRINCIPAL,
+                )
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+            bgcolor=WHITE,
+            modal=False,
+            shadow_color=PINK_200,
+            elevation=15,
+            shape=ft.RoundedRectangleBorder(radius=12),
+            scrollable=False,
+        )
+
+    def login(self, e: ft.ControlEvent) -> None:
+        """Muestra el diálogo de login y redirige a `/home` al autenticarse."""
+        usuario, password, olvido = self._crear_controles_login()
+        dialog = self._crear_dialogo_login(usuario, password, olvido)
+        self.page.show_dialog(dialog)  # Flet 0.80: reemplaza page.open()
+        self.page.update()
+
+    def _loader_overlay_mostrar(self, mostrar: bool):
+        """Loader en overlay (top-right). Add/remove explícito: visible solo durante transiciones."""
+        if mostrar:
+            self._asegurar_loader_overlay()
+        else:
+            self._retirar_loader_overlay()
+        self.page.update()
+
+    def _crear_loader_overlay_container(self) -> ft.Container:
+        """Construye el contenedor overlay del loader de transición."""
+        return ft.Container(
+            content=self.loader_overlay,
+            top=18,
+            right=155,
+            alignment=ft.Alignment(255, 0),
+        )
+
+    def _asegurar_loader_overlay(self) -> None:
+        """Asegura que el loader exista y esté montado en overlay."""
+        if not getattr(self, "_loader_ctn", None):
+            self._loader_ctn = self._crear_loader_overlay_container()
+        if self._loader_ctn not in self.page.overlay:
+            self.page.overlay.append(self._loader_ctn)
+
+    def _retirar_loader_overlay(self) -> None:
+        """Retira el loader del overlay cuando está presente."""
+        ctn = getattr(self, "_loader_ctn", None)
+        if ctn and ctn in self.page.overlay:
+            self.page.overlay.remove(ctn)
+
+    @staticmethod
+    def _resolver_contexto_ruta(
+        troute: ft.TemplateRoute,
+        res: Any,
+    ) -> tuple[str | None, Any, bool]:
+        """Deriva ruta, handler y bandera de transición desde el resultado del router."""
+        if not res:
+            return None, None, False
+        route, handler = res
+        es_transicion = not troute.match("/")
+        return route, handler, es_transicion
+
+    def _aplicar_contexto_ruta(self, handler: Any, es_transicion: bool) -> None:
+        """Aplica loader y configuración de appbar para una ruta resuelta."""
+        if es_transicion:
+            self._loader_overlay_mostrar(True)
+        self._actualizar_appbar_para_ruta(handler)
+
+    def _actualizar_appbar_para_ruta(self, route_handler: Any) -> None:
+        """Actualiza appbar según metadatos de la ruta activa."""
+        height, appbar_content = get_appbar_content(route_handler.appbar, self)
+        self.appbar.height = height
+        self.appbar.content = appbar_content
+        self.page.update()
+
+    @staticmethod
+    def _padding_para_ruta(route: str | None) -> ft.Padding:
+        """Define padding especial para hoja de trabajo y cero para el resto."""
+        return ft.Padding.all(3) if route == "/home/hoja_trabajo" else ft.Padding.all(0)
+
+    @staticmethod
+    def _ejecutar_on_enter_seguro(handler: Any, page: ft.Page, view_instance: Any) -> None:
+        """Ejecuta `on_enter` cuando existe, aislando errores de la vista."""
+        if not handler.on_enter:
+            return
+        try:
+            handler.on_enter(page, view_instance)
+        except Exception as ex:
+            print("Error en on_enter:", ex)
+
+    def route_change(self, e: ft.RouteChangeEvent) -> None:
+        """Redirige entre vistas usando el registro de rutas con loader transitorio."""
+        sync_banner_prefijo(self.page, app=self)
+        troute = ft.TemplateRoute(self.page.route)
+        update_topbar(troute, self)
+        res = resolve_route(troute)
+        route, handler, es_transicion = self._resolver_contexto_ruta(troute, res)
+        if handler:
+            self._aplicar_contexto_ruta(handler, es_transicion)
+
+        self.page.run_task(self._build_and_navigate, troute, res, es_transicion, route)
+
+    def _crear_vista(self, route: str | None, content: ft.Control) -> ft.View:
+        """Construye la `ft.View` con appbar y contenido principal."""
+        return ft.View(
+            route=route,
+            controls=[self.appbar, content],
+            bgcolor=FONDO_PAGINA,
+            padding=self._padding_para_ruta(route),
+        )
+
+    async def _build_and_navigate(
+        self,
+        troute: ft.TemplateRoute,
+        res: Any,
+        es_transicion: bool,
+        route: str | None,
+    ) -> None:
+        """Construye la vista activa para la ruta y ejecuta `on_enter` cuando aplique."""
+        try:
+            await asyncio.sleep(0)
+            self._reiniciar_vistas_para_ruta(troute)
+
+            if self._resolver_fallo_ruta(res):
+                return
+
+            self._construir_view_desde_handler(res, route)
+        except Exception as ex:
+            print(ex)
+        finally:
+            if res and es_transicion:
+                self._loader_overlay_mostrar(False)
+            self.page.update()
+
+    def _reiniciar_vistas_para_ruta(self, troute: ft.TemplateRoute) -> None:
+        """Reinicia stack de vistas antes de renderizar la ruta activa."""
+        if troute.match("/") and self.page.views:
+            self.page.clean()
+        # Una vista por ruta: evita acumular ft.View y controles al navegar (patrón Flet).
+        self.page.views.clear()
+
+    def _navegar_a_ruta(self, ruta: str) -> None:
+        """Navega asíncronamente hacia la ruta indicada."""
+        asyncio.create_task(self.page.push_route(ruta))
+
+    def _resolver_fallo_ruta(self, res: Any) -> bool:
+        """Si no hay match en routing, redirige a raíz y retorna True."""
+        if res:
+            return False
+        self._navegar_a_ruta("/")
+        return True
+
+    def _construir_view_desde_handler(self, res: Any, route: str | None) -> None:
+        """Construye y pinta la vista usando el handler resuelto."""
+        _, handler = res
+        content, view_instance = handler.build_view(self.page, self)
+        self.page.views.append(self._crear_vista(route, content))
+        self.page.update()
+        self._ejecutar_on_enter_seguro(handler, self.page, view_instance)
+
+    def view_pop(self, e: ft.ViewPopEvent | None):
+        """Atrás: subrutas /home/... vuelven a /home (sin depender de la pila de vistas)."""
+        destino = parent_route_for_back(self.page.route)
+        if destino is None:
+            return
+        self._loader_overlay_mostrar(True)
+        self._navegar_a_ruta(destino)
+
+def main(page: ft.Page):
+    """Configura la ventana principal y dispara el flujo inicial de la app."""
+    _configurar_pagina_principal(page)
+
+    mensaje_arranque = ft.Text("", color=ft.Colors.GREY_600, visible=False)
+    page.add(mensaje_arranque)
     page.update()  # Aplica full_screen y demás propiedades de ventana
-    app = MagneticosApp(page)
+    app = InformacionExogenaApp(page)
 
-    def _continuar_arranque() -> None:
-        """Tras condiciones + activación (si aplica): valida catálogos y pinta la ruta inicial."""
-        msg.value = "🔄 Validando bases de datos..."
-        msg.visible = True
-        page.update()
-        time.sleep(0.5)
+    ejecutar_si_corresponde(
+        page,
+        app,
+        lambda: _continuar_arranque_inicial(page, app, mensaje_arranque),
+    )
 
-        result = app.container.cargar_catalogos_uc.ejecutar()
-        msg.value = result
-        msg.visible = True
-        page.update()
-        time.sleep(0.8 if result.startswith("✅") else 300)
-
-        msg.visible = False
-        page.update()
-        page.route = "/"
-        app.route_change(None)
-
-    ejecutar_si_corresponde(page, app, _continuar_arranque)
-
-if __name__ == '__main__':
-    ft.run(main)  # Flet 0.80: run(main) reemplaza a app(target=main) 
+if __name__ == "__main__":
+    ft.run(main)  # Flet 0.80: run(main) reemplaza a app(target=main)

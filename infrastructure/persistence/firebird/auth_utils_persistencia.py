@@ -1,9 +1,4 @@
-"""
-Persistencia y operaciones de BD para autenticación, usuarios y utilidades
-(traducción de códigos, restauración de BD, flags activo).
-
-`auth_utils` reexporta por compatibilidad; en código nuevo preferir este módulo.
-"""
+"""Autenticación, usuarios, traducción de catálogos, restauración de BD Helisa y columnas tipo activo S/N."""
 from typing import Optional, Tuple, Any
 import secrets
 import string
@@ -52,126 +47,44 @@ TABLAS_PERMITIDAS = {
 
 
 def generar_clave(longitud: int = 12) -> str:
-    """
-    Genera una clave aleatoria segura alfanumérica usando secrets.
-    
-    Parameters
-    ----------
-    longitud : int, optional
-        Longitud de la clave a generar. Por defecto 12.
-    
-    Returns
-    -------
-    str
-        Clave aleatoria alfanumérica. Ejemplo: 'G7xP9dLk2Wm3'
-    
-    Examples
-    --------
-    >>> clave = generar_clave(16)
-    >>> len(clave)
-    16
-    """
-    caracteres = string.ascii_letters + string.digits
-    return ''.join(secrets.choice(caracteres) for _ in range(longitud))
+    caracteres_permitidos = string.ascii_letters + string.digits
+    return "".join(secrets.choice(caracteres_permitidos) for _ in range(longitud))
 
 
 def autenticar_usuario(nombre: str, clave: str) -> Optional[Tuple[int, str]]:
-    """
-    Autentica un usuario verificando nombre y clave en la base de datos.
-    
-    Parameters
-    ----------
-    nombre : str
-        Nombre de usuario a autenticar.
-    clave : str
-        Clave del usuario.
-    
-    Returns
-    -------
-    Optional[Tuple[int, str]]
-        Tupla con (id, nombre) si la autenticación es exitosa.
-        None si las credenciales son incorrectas o hay error.
-    
-    Raises
-    ------
-    ConnectionError
-        Si no se puede conectar a la base de datos.
-    """
     try:
-        conn = CNX_BDHelisa('EX', -1, "sysdba")
-        cur = conn.cursor()
-        cur.execute(
+        conexion = CNX_BDHelisa("EX", -1, "sysdba")
+        cursor = conexion.cursor()
+        cursor.execute(
             "SELECT id, nombre FROM USUARIOS WHERE nombre = ? AND clave = ? AND activo = 'S'",
-            (nombre, clave)
+            (nombre, clave),
         )
-        resultado = cur.fetchone()
-        cur.close()
-        conn.close()
+        resultado = cursor.fetchone()
+        cursor.close()
+        conexion.close()
         return resultado
-    except Exception as e:
-        print(f"Error obteniendo el usuario: {str(e)}")
+    except Exception as exc:
+        print(f"Error obteniendo el usuario: {exc}")
         return None
 
 
 def obtener_usuarios() -> list[Tuple[int, str, str, str]]:
-    """
-    Obtiene la lista completa de usuarios activos e inactivos.
-    
-    Returns
-    -------
-    list[Tuple[int, str, str, str]]
-        Lista de tuplas con (Id, Nombre, Email, Activo).
-        Activo puede ser 'S' o 'N'.
-        Lista vacía si hay error.
-    
-    Raises
-    ------
-    ConnectionError
-        Si no se puede conectar a la base de datos.
-    """
     try:
-        conn = CNX_BDHelisa('EX', -1, "sysdba")
-        cur = conn.cursor()
-        cur.execute("SELECT Id, Nombre, Email, activo FROM USUARIOS")
-        data = cur.fetchall()
-        cur.close()
-        conn.close()
+        conexion = CNX_BDHelisa("EX", -1, "sysdba")
+        cursor = conexion.cursor()
+        cursor.execute("SELECT Id, Nombre, Email, activo FROM USUARIOS")
+        data = cursor.fetchall()
+        cursor.close()
+        conexion.close()
         return data
-    except Exception as e:
-        print(f"Error obteniendo usuarios: {str(e)}")
+    except Exception as exc:
+        print(f"Error obteniendo usuarios: {exc}")
         return []
 
 
 def crear_usuario(usuario_id: Optional[int], nombre: str, email: str) -> bool:
-    """
-    Crea un nuevo usuario en la base de datos.
-    
-    Si usuario_id es None, inserta un nuevo usuario (previo a validación de duplicados).
-    Si usuario_id existe, actualiza nombre y email del usuario.
-    
-    Parameters
-    ----------
-    usuario_id : Optional[int]
-        ID del usuario. Si es None, se crea un nuevo usuario.
-        Si tiene valor, se actualiza el usuario existente.
-    nombre : str
-        Nombre del usuario. Se limpia automáticamente (strip).
-    email : str
-        Email del usuario. Se limpia automáticamente (strip).
-    
-    Returns
-    -------
-    bool
-        True si la operación se realizó correctamente.
-        False si hubo error, duplicado o validación fallida.
-    
-    Raises
-    ------
-    ConnectionError
-        Si no se puede conectar a la base de datos.
-    """
     try:
-        with transaccion_segura(codigo_empresa=-1) as (conn, cur):
+        with transaccion_segura(codigo_empresa=-1) as (_conn, cur):
             # Limpieza de valores
             nombre = nombre.strip()
             email = email.strip()
@@ -206,24 +119,18 @@ def crear_usuario(usuario_id: Optional[int], nombre: str, email: str) -> bool:
                     """,
                     (nombre, email, clave)
                 )
-                # Commit automático si todo sale bien
                 return True
-            
-            # UPDATE
-            else:
-                cur.execute(
-                    """
-                    UPDATE USUARIOS
-                    SET Nombre = ?, Email = ?
-                    WHERE Id = ?
-                    """,
-                    (nombre, email, usuario_id)
-                )
-                # Commit automático si todo sale bien
-                return True
-                
-    except Exception as e:
-        print(f"Error guardando usuario: {str(e)}")
+            cur.execute(
+                """
+                UPDATE USUARIOS
+                SET Nombre = ?, Email = ?
+                WHERE Id = ?
+                """,
+                (nombre, email, usuario_id),
+            )
+            return True
+    except Exception as exc:
+        print(f"Error guardando usuario: {exc}")
         return False
 
 
@@ -247,41 +154,13 @@ def obtener_codigos_traduccion(
         cur.close()
         con.close()
         return resultado
-    except Exception as e:
-        print(f"Error al obtener {tabla}: {e}")
+    except Exception as exc:
+        print(f"Error al obtener {tabla}: {exc}")
         return None
 
 
 def restaurar_base_datos(loader: Any, page: Optional[Any] = None) -> Optional[Exception]:
-    """
-    Restaura la base de datos eliminando la actual y recreándola desde el producto.
-    
-    Protegido contra ejecuciones simultáneas y crea backup automático antes de eliminar.
-    
-    Parameters
-    ----------
-    loader : Any
-        Objeto loader para mostrar progreso durante la recreación de la BD.
-    page : Any, optional
-        Página Flet para actualizaciones UI thread-safe.
-    
-    Returns
-    -------
-    Optional[Exception]
-        None si la operación fue exitosa.
-        Exception si hubo error durante el proceso.
-    
-    Raises
-    ------
-    RuntimeError
-        Si el proceso de restauración ya está en curso.
-    ValueError
-        Si no hay empresa seleccionada en session.EMPRESA_ACTUAL.
-    
-    Notes
-    -----
-    Esta operación es destructiva. Se crea un backup automático antes de eliminar la BD.
-    """
+    """Elimina la BD EX de la empresa en sesión, con backup previo vía proceso_protegido, y la recrea."""
     codigo = session.EMPRESA_ACTUAL["codigo"]
     producto = session.EMPRESA_ACTUAL["producto"]
     
@@ -339,40 +218,11 @@ def actualizar_activo(
     colid: str,
     id_valor: Any,
     value: bool,
-    codEmpresa: int
+    codEmpresa: int,
 ) -> bool:
-    """
-    Actualiza el campo activo de un registro en cualquier tabla.
-    
-    Parameters
-    ----------
-    tabla : str
-        Nombre de la tabla a actualizar.
-    colactivo : str
-        Nombre de la columna que contiene el valor activo.
-    colid : str
-        Nombre de la columna ID para identificar el registro.
-    id_valor : Any
-        Valor del ID del registro a actualizar.
-    value : bool
-        Nuevo valor para el campo activo (True/False se convierte a 'S'/'N').
-    codEmpresa : int
-        Código de la empresa. Si es -1, usa la BD central (EX).
-    
-    Returns
-    -------
-    bool
-        True si la actualización fue exitosa, False si hubo error.
-    
-    Raises
-    ------
-    ConnectionError
-        Si no se puede conectar a la base de datos.
-    """
+    """UPDATE tabla SET colactivo S/N donde colid = id_valor; tablas permitidas contra inyección."""
     try:
-        # Whitelist de tablas permitidas para prevenir inyecciones SQL
-        TABLAS_PERMITIDAS_ACTIVO = {
-            # Tablas BD global
+        tablas_permiso_activo = {
             "EMPRESAS",
             "USUARIOS",
             # Tablas BD particular
@@ -393,31 +243,24 @@ def actualizar_activo(
             "TERCEROS_MOV_CONT",
             "TERCEROS_MOV_TRIB",
         }
-        
-        # Normalizar tabla a mayúsculas y validar contra whitelist
         tabla_normalizada = tabla.upper()
-        if tabla_normalizada not in TABLAS_PERMITIDAS_ACTIVO:
+        if tabla_normalizada not in tablas_permiso_activo:
             print(f"Error: Tabla '{tabla}' no permitida para actualizar_activo")
             return False
-        
-        # Validar nombres de columnas (solo caracteres alfanuméricos y guión bajo)
-        if not (colactivo.replace('_', '').isalnum() and colid.replace('_', '').isalnum()):
+        if not (colactivo.replace("_", "").isalnum() and colid.replace("_", "").isalnum()):
             print(f"Error: Nombres de columnas inválidos")
             return False
-        
-        # Convertir bool a 'S'/'N'
-        valor_str = 'S' if value else 'N'
-        
-        # Usar transacción segura para garantizar atomicidad
-        with transaccion_segura(codigo_empresa=codEmpresa) as (con, cur):
-            # Usar parámetros preparados con tabla normalizada
-            cur.execute(f"""
+        valor_sn = "S" if value else "N"
+        with transaccion_segura(codigo_empresa=codEmpresa) as (_con, cur):
+            cur.execute(
+                f"""
                 UPDATE {tabla_normalizada}
                 SET {colactivo} = ?
                 WHERE {colid} = ?
-            """, (valor_str, id_valor))
-            # Commit automático si todo sale bien
+                """,
+                (valor_sn, id_valor),
+            )
         return True
-    except Exception as e:
-        print(f"Error actualizando activo en {tabla}: {e}")
+    except Exception as exc:
+        print(f"Error actualizando activo en {tabla}: {exc}")
         return False

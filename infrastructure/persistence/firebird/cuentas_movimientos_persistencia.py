@@ -109,12 +109,12 @@ def obtener_cuentas_producto(tipo_cuentas: int, codigo: int, producto: str) -> L
         cur.execute(base_sql)
         rows = cur.fetchall()
 
-        for r in rows:
+        for fila_movimiento in rows:
             if tipo_cuentas == 1:
-                cuenta, nombre, naturaleza, tercero, inicial, deb, cred, subcuentas = r[:8]
+                cuenta, nombre, naturaleza, tercero, inicial, deb, cred, subcuentas = fila_movimiento[:8]
                 tercero = None
             else:
-                cuenta, nombre, naturaleza, tercero, inicial, deb, cred, subcuentas = r[:8]
+                cuenta, nombre, naturaleza, tercero, inicial, deb, cred, subcuentas = fila_movimiento[:8]
 
             if naturaleza == "D":
                 saldo_final = inicial + deb + cred
@@ -386,19 +386,19 @@ def obtener_subcuentas(tipo_cuentas: int, prefijo: str) -> List[Dict[str, Any]]:
         cur.execute(sql, (prefijo_like, prefijo))
         rows = cur.fetchall()
         
-        for r in rows:
+        for fila_cuenta in rows:
             subcuentas.append({
-                "id": r[0],
-                "codigo": r[1],
-                "nombre": r[2],
-                "naturaleza": r[3],
-                "tercero": r[4],
-                "saldoinicial": r[5],
-                "debitos": r[6],
-                "creditos": r[7],
-                "saldofinal": r[8],
-                "valorabsoluto": r[9],
-                "subcuentas": r[10]
+                "id": fila_cuenta[0],
+                "codigo": fila_cuenta[1],
+                "nombre": fila_cuenta[2],
+                "naturaleza": fila_cuenta[3],
+                "tercero": fila_cuenta[4],
+                "saldoinicial": fila_cuenta[5],
+                "debitos": fila_cuenta[6],
+                "creditos": fila_cuenta[7],
+                "saldofinal": fila_cuenta[8],
+                "valorabsoluto": fila_cuenta[9],
+                "subcuentas": fila_cuenta[10],
             })
     except Exception as e:
         print(f"Error cargando subcuentas: {e}")

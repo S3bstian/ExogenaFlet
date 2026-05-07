@@ -1,6 +1,4 @@
-"""
-Persistencia Firebird: DATOSESPECIFICOS (opciones clase 2, CRUD, subtipos HIJO).
-"""
+"""DATOSESPECIFICOS: catálogos dependientes, padres HIJOS y CRUD de filas usuario."""
 import re
 from typing import Any, Dict, List, Optional
 
@@ -25,7 +23,7 @@ def _intish(v: Any) -> Optional[int]:
         return None
 
 
-def _conn():
+def _conexion_empresa_ex():
     return CNX_BDHelisa("EX", session.EMPRESA_ACTUAL["codigo"], "sysdba")
 
 
@@ -49,15 +47,7 @@ def _parse_hijos_raw(hijos_raw: Any) -> List[int]:
 
 
 def _siguiente_codigo_por_patron(codigos: List[int]) -> int:
-    """
-    Calcula el siguiente CODIGO respetando el patrón dominante encontrado.
-
-    Regla:
-    - Ordena y deduplica códigos válidos.
-    - Calcula diferencias positivas entre consecutivos.
-    - Usa la diferencia más frecuente como paso.
-    - En empate, prioriza el paso más cercano al último salto observado.
-    """
+    """Inferencia de paso entre CODIGOs existentes (frecuencia de deltas; empate por cercanía al último salto)."""
     if not codigos:
         return 1
 
@@ -72,19 +62,19 @@ def _siguiente_codigo_por_patron(codigos: List[int]) -> int:
             return unico + 10
         return unico + 1
 
-    diffs: List[int] = []
-    for i in range(1, len(serie)):
-        d = serie[i] - serie[i - 1]
+    deltas: List[int] = []
+    for indice in range(1, len(serie)):
+        d = serie[indice] - serie[indice - 1]
         if d > 0:
-            diffs.append(d)
-    if not diffs:
+            deltas.append(d)
+    if not deltas:
         return serie[-1] + 1
 
     frecuencias: Dict[int, int] = {}
-    for d in diffs:
+    for d in deltas:
         frecuencias[d] = frecuencias.get(d, 0) + 1
 
-    ultimo_salto = diffs[-1]
+    ultimo_salto = deltas[-1]
     paso = min(
         frecuencias.keys(),
         key=lambda d: (-frecuencias[d], abs(d - ultimo_salto), d),
@@ -104,7 +94,7 @@ def obtener_tabla_padre_para_catalogo_dependiente(tabla_hija: str) -> Optional[s
     tb = str(tabla_hija or "").strip()
     if not tb:
         return None
-    conn = _conn()
+    conn = _conexion_empresa_ex()
     cur = None
     try:
         cur = conn.cursor()
@@ -131,11 +121,11 @@ def obtener_tabla_padre_para_catalogo_dependiente(tabla_hija: str) -> Optional[s
         )
         mejor_tabla: Optional[str] = None
         mejor_n = 0
-        for r in cur.fetchall() or []:
-            t_pad = (r[0] or "").strip()
+        for fila in cur.fetchall() or []:
+            t_pad = (fila[0] or "").strip()
             if not t_pad or t_pad.upper() == tb.upper():
                 continue
-            hijos = set(_parse_hijos_raw(r[1]))
+            hijos = set(_parse_hijos_raw(fila[1]))
             n_inter = len(hijos & codigos_hija)
             if n_inter > mejor_n:
                 mejor_n = n_inter
@@ -161,7 +151,7 @@ def obtener_opciones_datos_especificos(
     """Sin padre: todas las filas de `tabla`. Con padre: filas cuyo CODIGO (como texto) empieza por el código elegido en el dropdown padre."""
     if not tabla:
         return []
-    conn = _conn()
+    conn = _conexion_empresa_ex()
     cur = None
     try:
         cur = conn.cursor()
@@ -186,7 +176,10 @@ def obtener_opciones_datos_especificos(
                 (tb, pref),
             )
         rows = cur.fetchall() or []
-        return [{"codigo": r[0], "descripcion": r[1] or "", "tipo": r[2] or 0} for r in rows]
+        return [
+            {"codigo": fila[0], "descripcion": fila[1] or "", "tipo": fila[2] or 0}
+            for fila in rows
+        ]
     finally:
         if cur is not None:
             try:
@@ -204,7 +197,7 @@ def obtener_padres_subtipo(tabla: Optional[str] = None) -> List[Dict[str, Any]]:
     Retorna padres para subtipo: registros con HIJOS no nulo/vacío.
     Incluye la lista `hijos` parseada desde la columna HIJOS.
     """
-    conn = _conn()
+    conn = _conexion_empresa_ex()
     cur = None
     try:
         cur = conn.cursor()
@@ -232,19 +225,19 @@ def obtener_padres_subtipo(tabla: Optional[str] = None) -> List[Dict[str, Any]]:
             )
         rows = cur.fetchall() or []
         padres: List[Dict[str, Any]] = []
-        for r in rows:
-            tabla_padre = (r[0] or "").strip()
-            codigo = r[1]
+        for fila in rows:
+            tabla_padre = (fila[0] or "").strip()
+            codigo = fila[1]
             if codigo is None:
                 continue
-            hijos = _parse_hijos_raw(r[3])
+            hijos = _parse_hijos_raw(fila[3])
             if not hijos:
                 continue
             padres.append(
                 {
                     "tabla": tabla_padre,
                     "codigo": int(codigo),
-                    "descripcion": (r[2] or "").strip(),
+                    "descripcion": (fila[2] or "").strip(),
                     "hijos": hijos,
                 }
             )
@@ -266,7 +259,7 @@ def obtener_opciones_datos_especificos_por_codigos(codigos: List[int]) -> List[D
     cods = [int(c) for c in codigos if c is not None]
     if not cods:
         return []
-    conn = _conn()
+    conn = _conexion_empresa_ex()
     cur = None
     try:
         cur = conn.cursor()
@@ -281,7 +274,10 @@ def obtener_opciones_datos_especificos_por_codigos(codigos: List[int]) -> List[D
             tuple(cods),
         )
         rows = cur.fetchall() or []
-        return [{"codigo": r[0], "descripcion": r[1] or "", "tipo": r[2] or 0} for r in rows]
+        return [
+            {"codigo": fila[0], "descripcion": fila[1] or "", "tipo": fila[2] or 0}
+            for fila in rows
+        ]
     finally:
         if cur is not None:
             try:
@@ -324,7 +320,7 @@ def crear_dato_especifico(tabla: str, descripcion: str, codigos_base: Optional[L
             else:
                 cur.execute(f"SELECT CODIGO FROM {T} WHERE TABLA = ?", (tabla_limpia,))
                 rows = cur.fetchall() or []
-                codigos = [_intish(r[0]) for r in rows]
+                codigos = [_intish(fila[0]) for fila in rows]
             n = _siguiente_codigo_por_patron([c for c in codigos if c is not None])
 
             new_id: Optional[int] = None

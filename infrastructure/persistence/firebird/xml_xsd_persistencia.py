@@ -64,10 +64,23 @@ def _parsear_restricciones_atributo(attr: ET.Element, ns: Dict[str, str]) -> Dic
         restriction = simple_type.find('.//xs:restriction', ns)
         if restriction is not None:
             restricciones['base'] = restriction.get('base', '')
-            for r in restriction:
-                tag_local = r.tag.split('}')[1] if '}' in r.tag else r.tag
-                if tag_local in ['minLength', 'maxLength', 'minInclusive', 'maxInclusive', 'pattern', 'totalDigits']:
-                    restricciones[tag_local] = r.get('value') or (r.text if r.text else '')
+            for elem_restriccion in restriction:
+                tag_local = (
+                    elem_restriccion.tag.split("}")[1]
+                    if "}" in elem_restriccion.tag
+                    else elem_restriccion.tag
+                )
+                if tag_local in [
+                    "minLength",
+                    "maxLength",
+                    "minInclusive",
+                    "maxInclusive",
+                    "pattern",
+                    "totalDigits",
+                ]:
+                    restricciones[tag_local] = elem_restriccion.get("value") or (
+                        elem_restriccion.text if elem_restriccion.text else ""
+                    )
     return restricciones
 
 
@@ -207,23 +220,23 @@ def obtener_hoja_para_validar(
         get_identidad=lambda r: r[0],
     )
     resultado = {}
-    for g in grupos:
-        codigo = str(g["rows"][0][1])
-        desc = g["rows"][0][2] or "Sin concepto"
+    for grupo in grupos:
+        codigo = str(grupo["rows"][0][1])
+        desc = grupo["rows"][0][2] or "Sin concepto"
         if codigo not in resultado:
             resultado[codigo] = {"descripcion": desc, "registros": {}}
         atributos = {}
         descripciones = {}
-        for r in g["rows"]:
-            nom, desc_attr, val = r[3], r[4], (r[5] or "")
+        for fila in grupo["rows"]:
+            nom, desc_attr, val = fila[3], fila[4], (fila[5] or "")
             if nom != "Número de Identificación":
                 atributos[nom] = val
                 descripciones[nom] = str(desc_attr).strip() if desc_attr else nom
-        atributos["_identidad"] = g["identidad"]
-        atributos["_id_concepto"] = g["id_concepto"]
-        atributos["_group_key"] = g["group_key"]
+        atributos["_identidad"] = grupo["identidad"]
+        atributos["_id_concepto"] = grupo["id_concepto"]
+        atributos["_group_key"] = grupo["group_key"]
         atributos["_descripciones_atributos"] = descripciones
-        resultado[codigo]["registros"][g["identidad"]] = atributos
+        resultado[codigo]["registros"][grupo["identidad"]] = atributos
     return resultado
 
 
@@ -330,17 +343,29 @@ def validar_excepciones_especiales(
     avisos = []
     identidad_num, tipo_doc_num, pais_num, identidad_limpia = _parsear_valores_excepciones(identidad, atributos_identidad)
     if tipo_doc_num == 31:
-        campos_nombres = [c for c in ['apl1', 'apl2', 'nom1', 'nom2'] if atributos_identidad.get(c, '').strip()]
+        campos_nombres = [
+            clave_nombre
+            for clave_nombre in ["apl1", "apl2", "nom1", "nom2"]
+            if atributos_identidad.get(clave_nombre, "").strip()
+        ]
         if campos_nombres:
             avisos.append(f"No se reportarán apellidos y nombres para NITs (tipo documento 31)")
     
     if tipo_doc_num in [42, 43] and identidad_limpia.startswith('444444'):
-        campos_dir = [c for c in ['dir', 'dpto', 'mun'] if atributos_identidad.get(c, '').strip()]
+        campos_dir = [
+            clave_direccion
+            for clave_direccion in ["dir", "dpto", "mun"]
+            if atributos_identidad.get(clave_direccion, "").strip()
+        ]
         if campos_dir:
             avisos.append(f"No se reportará dirección, departamento y municipio para identidades fiscales que inician con 444444")
     
     if pais_num != 0 and pais_num != 169:
-        campos_dpto = [c for c in ['dpto', 'mun'] if atributos_identidad.get(c, '').strip()]
+        campos_dpto = [
+            clave_departamento
+            for clave_departamento in ["dpto", "mun"]
+            if atributos_identidad.get(clave_departamento, "").strip()
+        ]
         if campos_dpto:
             avisos.append(f"No se reportará departamento y municipio para países diferentes a Colombia (169)")
     
@@ -458,20 +483,20 @@ def obtener_hoja_para_generar(
         return {}
     grupos = agrupar_filas_hoja(
         rows,
-        get_id=lambda r: r[5],
-        get_id_concepto=lambda r: r[6],
-        get_identidad=lambda r: r[0],
+        get_id=lambda row: row[5],
+        get_id_concepto=lambda row: row[6],
+        get_identidad=lambda row: row[0],
     )
     resultado = {}
-    for g in grupos:
+    for grupo in grupos:
         attrs = {}
-        for r in g["rows"]:
-            nom, val = r[3], (r[4] or "")
+        for fila in grupo["rows"]:
+            nom, val = fila[3], (fila[4] or "")
             if nom != "Número de Identificación":
                 attrs[nom] = val
-        attrs["_identidad"] = g["identidad"]
-        attrs["_primer_id"] = g["primer_id"]
-        resultado[g["group_key"]] = attrs
+        attrs["_identidad"] = grupo["identidad"]
+        attrs["_primer_id"] = grupo["primer_id"]
+        resultado[grupo["group_key"]] = attrs
     return resultado
 
 

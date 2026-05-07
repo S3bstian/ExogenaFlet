@@ -1,25 +1,24 @@
-"""
-Consultas y mutaciones Firebird sobre la tabla FORMATOS.
-
-Usado por repositorios y por la pantalla de formatos vía casos de uso.
-"""
+"""Lectura y actualización de cabecera en FORMATOS."""
 from typing import Any, Dict, List
 
+from core import session
 from infrastructure.adapters.helisa_firebird import CNX_BDHelisa
 from infrastructure.adapters.proteccion_firebird import transaccion_segura
-from core import session
+
+
+def _notificar_error(operacion: str, cause: BaseException) -> None:
+    print(f"FORMATOS ({operacion}): {cause}")
+
+
+def _codigo_empresa_sesion() -> int:
+    return session.EMPRESA_ACTUAL["codigo"]
 
 
 def consultar_formatos() -> List[tuple]:
-    """
-    Lista todos los formatos ordenados por código de formato.
-
-    Retorna lista vacía ante error de conexión o consulta.
-    """
     try:
-        conn = CNX_BDHelisa("EX", session.EMPRESA_ACTUAL["codigo"], "sysdba")
-        cur = conn.cursor()
-        cur.execute(
+        conexion = CNX_BDHelisa("EX", _codigo_empresa_sesion(), "sysdba")
+        cursor = conexion.cursor()
+        cursor.execute(
             """
             SELECT
                 Id, formato, descripcion, concepto, version, numenvio, fecenvio,
@@ -27,42 +26,37 @@ def consultar_formatos() -> List[tuple]:
             FROM FORMATOS ORDER BY Formato
             """
         )
-        resultado = cur.fetchall()
-        cur.close()
-        conn.close()
+        resultado = cursor.fetchall()
+        cursor.close()
+        conexion.close()
         return resultado
-    except Exception as e:
-        print(f"[ERROR] Error al obtener los formatos: {str(e)}")
+    except Exception as exc:
+        _notificar_error("listado", exc)
         return []
 
 
-def persistir_cambios_formato(campos: Dict[str, Any], formato: str) -> bool:
-    """
-    Persiste cabecera de formato (concepto inserción/actualización, envío, fechas).
-
-    ``campos`` conserva el contrato legacy: valores en controles con atributo ``.value``.
-    """
+def persistir_cambios_formato(campos: Dict[str, Any], codigo_formato: str) -> bool:
+    """campos: dict de controles Flet con .value (contrato legacy de la pantalla)."""
     try:
-        with transaccion_segura() as (_conn, cur):
-            concepto_valor = "01" if campos["concepto"].value == "Inserción" else "02"
-            fecha_envio = f"{campos['fechaenvio'].value}T{campos['horaenvio'].value}"
-
-            cur.execute(
+        with transaccion_segura() as (_conn, cursor):
+            concepto_codigo = "01" if campos["concepto"].value == "Inserción" else "02"
+            fecha_envio_iso = f"{campos['fechaenvio'].value}T{campos['horaenvio'].value}"
+            cursor.execute(
                 """
                 UPDATE FORMATOS
                 SET concepto = ?, numenvio = ?, fecenvio = ?, fecinicial = ?, fecfinal = ?
                 WHERE formato = ?
                 """,
                 (
-                    concepto_valor,
+                    concepto_codigo,
                     campos["numenvio"].value,
-                    fecha_envio,
+                    fecha_envio_iso,
                     campos["fechainicial"].value,
                     campos["fechafinal"].value,
-                    formato,
+                    codigo_formato,
                 ),
             )
         return True
-    except Exception as e:
-        print(f"[ERROR] Error al actualizar los valores del formato: {str(e)}")
+    except Exception as exc:
+        _notificar_error(f"update formato={codigo_formato}", exc)
         return False

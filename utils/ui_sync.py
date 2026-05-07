@@ -2,7 +2,28 @@
 Sincronización UI desde threads.
 Actualiza controles Flet (ProgressRing, Text) de forma segura desde hilos secundarios.
 """
-from typing import Any, Optional
+from typing import Any, Callable, Optional
+
+
+def _texto_del_loader_row(loader_row: Any, texto: str) -> None:
+    """Actualiza la etiqueta de texto dentro de `crear_loader_row` (controls[1])."""
+    if (
+        getattr(loader_row, "controls", None)
+        and len(loader_row.controls) > 1
+        and hasattr(loader_row.controls[1], "value")
+    ):
+        loader_row.controls[1].value = texto
+
+
+def _programar_ui(page: Optional[Any], fn: Callable[[], None]) -> None:
+    """Encola ejecución en el loop principal de Flet; si falla o no hay session, ejecuta igual."""
+    try:
+        if page and getattr(page, "session", None) and getattr(page.session, "connection", None):
+            page.session.connection.loop.call_soon_threadsafe(fn)
+        else:
+            fn()
+    except Exception:
+        fn()
 
 
 def loader_row_trabajo(
@@ -15,7 +36,7 @@ def loader_row_trabajo(
     Muestra el Row de `crear_loader_row` (índice 1 = texto).
     Si `mensaje_estado` se pasa, lo oculta (mensaje inline bajo la tabla, etc.).
     """
-    loader_row.controls[1].value = texto
+    _texto_del_loader_row(loader_row, texto)
     loader_row.visible = True
     if mensaje_estado is not None:
         mensaje_estado.visible = False
@@ -47,7 +68,7 @@ def loader_row_visibilidad(
     Útil cuando no hay mensaje de estado que ocultar o solo se alterna visible.
     """
     if texto is not None:
-        loader_row.controls[1].value = texto
+        _texto_del_loader_row(loader_row, texto)
     loader_row.visible = visible
     page.update()
 
@@ -73,25 +94,13 @@ def actualizar_progreso_ui(
         if page:
             page.update()
 
-    try:
-        if page and getattr(page, "session", None) and getattr(page.session, "connection", None):
-            page.session.connection.loop.call_soon_threadsafe(_hacer)
-        else:
-            _hacer()
-    except Exception:
-        _hacer()
+    _programar_ui(page, _hacer)
 
 
-def ejecutar_en_ui(page: Any, fn) -> None:
+def ejecutar_en_ui(page: Any, fn: Callable[..., None]) -> None:
     """Ejecuta fn() en el hilo de la UI (para actualizaciones desde workers)."""
     def _hacer():
         fn()
         if page:
             page.update()
-    try:
-        if page and getattr(page, "session", None) and getattr(page.session, "connection", None):
-            page.session.connection.loop.call_soon_threadsafe(_hacer)
-        else:
-            _hacer()
-    except Exception:
-        _hacer()
+    _programar_ui(page, _hacer)

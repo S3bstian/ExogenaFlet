@@ -1,197 +1,134 @@
-"""
-Persistencia Firebird: consorcios de la empresa actual (CRUD y verificación activo).
-"""
-from typing import Optional, List, Dict, Any
+"""Consorcios de la empresa en sesión: lectura, CRUD y bandera ConsorciosActivo en EMPRESAS."""
+from typing import Any, Dict, List, Optional
+
+from core import session
 from infrastructure.adapters.helisa_firebird import CNX_BDHelisa
 from infrastructure.adapters.proteccion_firebird import transaccion_segura
-from core import session
+
+
+def _notificar_error(operacion: str, cause: BaseException) -> None:
+    print(f"Consorcios ({operacion}): {cause}")
+
+
+def _codigo_empresa_sesion() -> int:
+    return session.EMPRESA_ACTUAL["codigo"]
+
+
+def _fila_consorcio_a_dict(
+    consorcio_id,
+    identidad,
+    nombre,
+    tipo_documento,
+    numero_fideicomiso,
+    porcentaje,
+    tipo_contrato,
+) -> Dict[str, Any]:
+    return {
+        "id": int(consorcio_id) if consorcio_id is not None else None,
+        "identidad": str(identidad).strip() if identidad is not None else "",
+        "razonsocial": (nombre or "").strip(),
+        "tipodocumento": (tipo_documento or "").strip(),
+        "fidecomiso": int(numero_fideicomiso) if numero_fideicomiso is not None else 0,
+        "porcentaje": float(porcentaje) if porcentaje is not None else 0.0,
+        "tipo_contrato": (tipo_contrato or "").strip(),
+    }
+
+
+def _parametros_insert(consorcio: Dict[str, Any]) -> tuple:
+    empresa = _codigo_empresa_sesion()
+    return (
+        int(consorcio.get("identidad")),
+        empresa,
+        consorcio.get("razonsocial", ""),
+        consorcio.get("tipodocumento", ""),
+        int(consorcio.get("fidecomiso") or 0),
+        int(round(float(consorcio.get("porcentaje") or 0))),
+        consorcio.get("tipo_contrato", ""),
+    )
+
+
+def _parametros_update(consorcio: Dict[str, Any]) -> tuple:
+    return (
+        consorcio.get("identidad", ""),
+        consorcio.get("razonsocial", ""),
+        consorcio.get("tipodocumento", ""),
+        int(consorcio.get("fidecomiso") or 0),
+        int(round(float(consorcio.get("porcentaje") or 0))),
+        consorcio.get("tipo_contrato", ""),
+        int(consorcio["id"]),
+    )
 
 
 def obtener_consorcios() -> List[Dict[str, Any]]:
-    """
-    Obtiene todos los consorcios asociados a la empresa actual.
-    
-    Returns
-    -------
-    List[Dict[str, Any]]
-        Lista de diccionarios, cada uno con las siguientes claves:
-        - 'id': ID del consorcio
-        - 'identidad': Identidad del consorcio
-        - 'razonsocial': Razón social o nombre del consorcio
-        - 'tipodocumento': Tipo de documento
-        - 'fidecomiso': Número de fideicomiso
-        - 'porcentaje': Porcentaje de participación
-        - 'tipo_contrato': Tipo de contrato
-        Lista vacía si hay error o no hay consorcios.
-    
-    Raises
-    ------
-    ConnectionError
-        Si no se puede conectar a la base de datos.
-    ValueError
-        Si no hay empresa seleccionada en session.EMPRESA_ACTUAL.
-    """
     try:
-        con = CNX_BDHelisa("EX", session.EMPRESA_ACTUAL["codigo"], "sysdba")
-        cur = con.cursor()
-        cur.execute("""
+        conexion = CNX_BDHelisa("EX", _codigo_empresa_sesion(), "sysdba")
+        cursor = conexion.cursor()
+        cursor.execute(
+            """
             SELECT Id, Identidad, Nombre, TipoDocumento, NoFideicomiso, Porcentaje, TipoContrato
             FROM CONSORCIOS
             WHERE IdentidadEmpresa = ?
             ORDER BY Nombre, Id
-        """, (session.EMPRESA_ACTUAL["codigo"],))
-        rows = cur.fetchall()
-        cur.close()
-        con.close()
-    except Exception as e:
-        print(f"Error leyendo Consorcios: {str(e)}")
+            """,
+            (_codigo_empresa_sesion(),),
+        )
+        filas = cursor.fetchall()
+        cursor.close()
+        conexion.close()
+    except Exception as exc:
+        _notificar_error("lectura lista", exc)
         return []
-        
-    data = []
-    for r in rows or []:
-        data.append({
-            "id": int(r[0]) if r[0] is not None else None,
-            "identidad": (str(r[1]).strip() if r[1] is not None else ""),
-            "razonsocial": (r[2] or "").strip(),
-            "tipodocumento": (r[3] or "").strip(),
-            "fidecomiso": int(r[4]) if r[4] is not None else 0,
-            "porcentaje": float(r[5]) if r[5] is not None else 0.0,
-            "tipo_contrato": (r[6] or "").strip(),
-        })
-    return data
+
+    registros: List[Dict[str, Any]] = []
+    for fila in filas or []:
+        registros.append(_fila_consorcio_a_dict(*fila))
+    return registros
 
 
-def verificar_consorcio_activo(identidad: int) -> bool:
-    """
-    Verifica si la empresa actual tiene consorcios activos para una identidad específica.
-    
-    Parameters
-    ----------
-    identidad : int
-        Identidad a verificar.
-    
-    Returns
-    -------
-    bool
-        True si la empresa tiene consorcios activos para esa identidad.
-        False si no hay consorcios activos o hay error.
-    
-    Raises
-    ------
-    ConnectionError
-        Si no se puede conectar a la base de datos.
-    ValueError
-        Si no hay empresa seleccionada en session.EMPRESA_ACTUAL.
-    """
+def verificar_consorcio_activo(identidad_empresa: int) -> bool:
+    """Lee EMPRESAS.ConsorciosActivo para la identidad indicada ('S' = activo)."""
     try:
-        con = CNX_BDHelisa("EX", -1, "sysdba")
-        cur = con.cursor()
-        cur.execute("""
-            SELECT ConsorciosActivo
-            FROM EMPRESAS
-            WHERE Identidad = ?
-        """, (identidad,))
-        row = cur.fetchone()
-        cur.close()
-        con.close()
-        return row[0] == 'S' if row else False
-    except Exception as e:
-        print(f"Error verificando consorcio activo: {e}")
+        conexion = CNX_BDHelisa("EX", -1, "sysdba")
+        cursor = conexion.cursor()
+        cursor.execute(
+            "SELECT ConsorciosActivo FROM EMPRESAS WHERE Identidad = ?",
+            (identidad_empresa,),
+        )
+        primera = cursor.fetchone()
+        cursor.close()
+        conexion.close()
+        return primera[0] == "S" if primera else False
+    except Exception as exc:
+        _notificar_error("verificar ConsorciosActivo", exc)
         return False
 
 
 def crear_consorcio(consorcio: Dict[str, Any]) -> Optional[int]:
-    """
-    Crea un nuevo consorcio en la base de datos.
-    
-    Parameters
-    ----------
-    consorcio : Dict[str, Any]
-        Diccionario con los datos del consorcio. Debe contener:
-        - 'identidad': Identidad del consorcio
-        - 'razonsocial': Razón social o nombre (opcional, default: "")
-        - 'tipodocumento': Tipo de documento (opcional, default: "")
-        - 'fidecomiso': Número de fideicomiso (opcional, default: 0)
-        - 'porcentaje': Porcentaje de participación (opcional, default: 0)
-        - 'tipo_contrato': Tipo de contrato (opcional, default: "")
-    
-    Returns
-    -------
-    Optional[int]
-        ID del consorcio creado si se insertó correctamente.
-        None si hubo error.
-    
-    Raises
-    ------
-    ConnectionError
-        Si no se puede conectar a la base de datos.
-    ValueError
-        Si no hay empresa seleccionada en session.EMPRESA_ACTUAL.
-    
-    Notes
-    -----
-    La identidad de la empresa se toma automáticamente de session.EMPRESA_ACTUAL.
-    """
+    """Inserta en CONSORCIOS usando session.EMPRESA_ACTUAL para IdentidadEmpresa."""
     try:
-        with transaccion_segura() as (con, cur):
-            cur.execute("""
+        with transaccion_segura() as (_con, cursor):
+            cursor.execute(
+                """
                 INSERT INTO CONSORCIOS (Identidad, IdentidadEmpresa, Nombre, TipoDocumento, NoFideicomiso, Porcentaje, TipoContrato)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 RETURNING Id
-            """, (
-                int(consorcio.get("identidad")),
-                session.EMPRESA_ACTUAL["codigo"],
-                consorcio.get("razonsocial", ""),
-                consorcio.get("tipodocumento", ""),
-                int(consorcio.get("fidecomiso") or 0),
-                int(round(float(consorcio.get("porcentaje") or 0))),
-                consorcio.get("tipo_contrato", ""),
-            ))
-            row = cur.fetchone()
-            new_id = int(row[0]) if row else None
-            # Commit automático si todo sale bien
-        return new_id
-    except Exception as e:
-        print(f"Error insertando Consorcio: {e}")
+                """,
+                _parametros_insert(consorcio),
+            )
+            fila_retorno = cursor.fetchone()
+            return int(fila_retorno[0]) if fila_retorno else None
+    except Exception as exc:
+        _notificar_error("insert", exc)
         return None
 
 
 def actualizar_consorcio(consorcio: Dict[str, Any]) -> bool:
-    """
-    Actualiza un consorcio existente por su ID.
-    
-    Parameters
-    ----------
-    consorcio : Dict[str, Any]
-        Diccionario con los datos del consorcio a actualizar. Debe contener:
-        - 'id': ID del consorcio a actualizar (requerido)
-        - 'identidad': Identidad del consorcio (opcional)
-        - 'razonsocial': Razón social (opcional)
-        - 'tipodocumento': Tipo de documento (opcional)
-        - 'fidecomiso': Número de fideicomiso (opcional)
-        - 'porcentaje': Porcentaje de participación (opcional)
-        - 'tipo_contrato': Tipo de contrato (opcional)
-    
-    Returns
-    -------
-    bool
-        True si se actualizó correctamente (al menos una fila afectada).
-        False si hubo error, el consorcio no existe o no se proporcionó 'id'.
-    
-    Raises
-    ------
-    ConnectionError
-        Si no se puede conectar a la base de datos.
-    ValueError
-        Si no hay empresa seleccionada en session.EMPRESA_ACTUAL.
-        Si el diccionario no contiene la clave 'id'.
-    """
     if not consorcio or consorcio.get("id") is None:
         return False
-    
     try:
-        with transaccion_segura() as (con, cur):
-            cur.execute("""
+        with transaccion_segura() as (_con, cursor):
+            cursor.execute(
+                """
                 UPDATE CONSORCIOS
                    SET Identidad = ?,
                        Nombre = ?,
@@ -200,51 +137,20 @@ def actualizar_consorcio(consorcio: Dict[str, Any]) -> bool:
                        Porcentaje = ?,
                        TipoContrato = ?
                  WHERE Id = ?
-            """, (
-                consorcio.get("identidad", ""),
-                consorcio.get("razonsocial", ""),
-                consorcio.get("tipodocumento", ""),
-                int(consorcio.get("fidecomiso") or 0),
-                int(round(float(consorcio.get("porcentaje") or 0))),
-                consorcio.get("tipo_contrato", ""),
-                int(consorcio["id"]),
-            ))
-            ok = (cur.rowcount or 0) > 0
-            # Commit automático si todo sale bien
-        return ok
-    except Exception as e:
-        print(f"Error actualizando Consorcio {consorcio.get('id')}: {str(e)}")
+                """,
+                _parametros_update(consorcio),
+            )
+            return (cursor.rowcount or 0) > 0
+    except Exception as exc:
+        _notificar_error(f"update id={consorcio.get('id')}", exc)
         return False
 
 
 def eliminar_consorcio(consorcio_id: int) -> bool:
-    """
-    Elimina un consorcio por su ID.
-    
-    Parameters
-    ----------
-    consorcio_id : int
-        ID del consorcio a eliminar.
-    
-    Returns
-    -------
-    bool
-        True si se eliminó correctamente (al menos una fila afectada).
-        False si hubo error o el consorcio no existe.
-    
-    Raises
-    ------
-    ConnectionError
-        Si no se puede conectar a la base de datos.
-    ValueError
-        Si no hay empresa seleccionada en session.EMPRESA_ACTUAL.
-    """
     try:
-        with transaccion_segura() as (con, cur):
-            cur.execute("DELETE FROM CONSORCIOS WHERE Id = ?", (int(consorcio_id),))
-            ok = (cur.rowcount or 0) > 0
-            # Commit automático si todo sale bien
-        return ok
-    except Exception as e:
-        print(f"Error eliminando Consorcio {consorcio_id}: {str(e)}")
+        with transaccion_segura() as (_con, cursor):
+            cursor.execute("DELETE FROM CONSORCIOS WHERE Id = ?", (int(consorcio_id),))
+            return (cursor.rowcount or 0) > 0
+    except Exception as exc:
+        _notificar_error(f"delete id={consorcio_id}", exc)
         return False

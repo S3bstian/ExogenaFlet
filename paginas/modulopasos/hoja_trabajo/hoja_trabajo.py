@@ -1,5 +1,6 @@
 import flet as ft
 import flet_datatable2 as fdt  # type: ignore[import-untyped]
+from typing import Callable
 from ui.colors import PINK_50, PINK_200, PINK_600, PINK_800, GREY_700, WHITE
 from ui.buttons import BOTON_PRINCIPAL, BOTON_SECUNDARIO, BOTON_SECUNDARIO_SIN
 from ui.dropdowns import DropdownCompact
@@ -119,7 +120,21 @@ class HojaTrabajoPage(ft.Column):
         self.loader_dialogo_trabajo = crear_loader_row("Abriendo formulario...", size=SIZE_SMALL)
         self.loader_dialogo_trabajo.visible = False
         self.pagination_text_footer = build_pagination_label(1, 1)
-        self.nav_row = ft.Row(
+        self.nav_row = self._crear_nav_row()
+
+        # Fila de herramientas (se reconstruye en `_actualizar_herramientas`).
+        self.herramientas_row = self._crear_herramientas_row()
+        self._actualizar_herramientas()
+        self._crear_panel_herramientas()
+        self._crear_tabla_principal()
+        self.content = self._crear_contenido_principal()
+
+    def view(self):
+        return self.content
+
+    def _crear_nav_row(self) -> ft.Row:
+        """Construye navegación inferior de paginación (anterior/siguiente)."""
+        return ft.Row(
             [
                 ft.ElevatedButton(
                     "Anterior",
@@ -145,17 +160,18 @@ class HojaTrabajoPage(ft.Column):
             ],
             alignment=ft.MainAxisAlignment.CENTER,
         )
-        
-        # Fila de herramientas (se reconstruye en `_actualizar_herramientas`)
-        self.herramientas_row = ft.Row(
+
+    def _crear_herramientas_row(self) -> ft.Row:
+        """Construye fila horizontal desplazable para botones de herramientas."""
+        return ft.Row(
             controls=[],
             spacing=3,
             expand=False,
-            scroll=ft.ScrollMode.AUTO
+            scroll=ft.ScrollMode.AUTO,
         )
-        
-        # Función para actualizar herramientas según el concepto
-        self._actualizar_herramientas()
+
+    def _crear_panel_herramientas(self) -> None:
+        """Inicializa contenedor, botón toggle y panel de herramientas."""
         self.herramientas_container = ft.Container(
             content=self.herramientas_row,
             width=0,
@@ -169,19 +185,19 @@ class HojaTrabajoPage(ft.Column):
             icon_color=PINK_600,
             style=BOTON_SECUNDARIO_SIN,
             tooltip="Desplegar herramientas",
-            on_click=self.toggle_herramientas
+            on_click=self.toggle_herramientas,
         )
         self.panel_herramientas = ft.Container(
             content=ft.Row(
-                [
-                    self.boton_toggle,
-                    self.herramientas_container
-                ],
+                [self.boton_toggle, self.herramientas_container],
                 alignment=ft.MainAxisAlignment.END,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
             )
         )
-        # Tabla DataTable2: encabezado fijo; Acciones e Identidad fijas (fixed_left_columns=2)
+
+    def _crear_tabla_principal(self) -> None:
+        """Inicializa tabla y contenedor visual de la hoja de trabajo."""
+        # Tabla DataTable2: encabezado fijo; Acciones e Identidad fijas (fixed_left_columns=2).
         self.table = fdt.DataTable2(
             columns=[fdt.DataColumn2(label=ft.Text("..."))],
             rows=[],
@@ -197,7 +213,7 @@ class HojaTrabajoPage(ft.Column):
             expand=True,
             bgcolor=WHITE,
         )
-        # Solo la tabla lleva borde/blanco: el slot exterior es transparente para ver el fondo si hay pocas filas.
+        # Solo la tabla lleva borde/blanco: el slot exterior es transparente con pocas filas.
         self.table_shell = ft.Container(
             content=self.table,
             bgcolor=WHITE,
@@ -213,7 +229,10 @@ class HojaTrabajoPage(ft.Column):
             ),
             expand=True,
         )
-        header = ft.Row(
+
+    def _crear_header_principal(self) -> ft.Row:
+        """Construye encabezado superior con título, filtros y panel de herramientas."""
+        return ft.Row(
             [
                 ft.Text("Hoja de Trabajo", size=18, weight=ft.FontWeight.BOLD),
                 self.dropdown_conceptos,
@@ -224,22 +243,22 @@ class HojaTrabajoPage(ft.Column):
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             height=45,
         )
-        self.content = ft.Column(
+
+    def _crear_contenido_principal(self) -> ft.Column:
+        """Arma el layout principal de la vista de hoja de trabajo."""
+        return ft.Column(
             [
-                header,
+                self._crear_header_principal(),
                 self.loader,
                 self.loader_herramientas,
                 self.loader_dialogo_trabajo,
                 self.table_container,
-                self.nav_row
+                self.nav_row,
             ],
             spacing=8,
             expand=True,
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         )
-
-    def view(self):
-        return self.content
 
     # --- Carga de datos ---
     def cargar_datos(self):
@@ -575,13 +594,116 @@ class HojaTrabajoPage(ft.Column):
             return 0
         return min(self.limit, len(self.matriz) - 1)
 
+    def _actualizar_paginacion_footer(self) -> None:
+        """Actualiza visibilidad de botones y texto de paginación."""
+        self.nav_row.controls[0].visible = not self.offset <= 0
+        has_more = getattr(self, "_has_more", False)
+        self.nav_row.controls[2].visible = has_more
+
+        pagina = (self.offset // self.limit) + 1 if self.limit else 1
+        total = getattr(self, "total_identidades", 0) or 0
+        total_paginas = (
+            max(1, (total + self.limit - 1) // self.limit) if self.limit else 1
+        )
+        self.pagination_text_footer.value = pagination_text_value(pagina, total_paginas)
+        self._page.update()
+
+    def _reconstruir_tabla(self, encabezados: list, num_cols: int, n_filas: int) -> None:
+        """Reconstruye columnas y filas desde cero (cuando cambia el esquema de la página)."""
+        self._ultimos_encabezados = tuple(encabezados)
+        col_valor = getattr(self, "_schema_columnas_valor", set())
+
+        anchos = calcular_anchos_columnas(
+            self._formatos_ui_uc, encabezados, col_valor, self._concepto_payload()
+        )
+        indices_valor = indices_columnas_numericas(encabezados, col_valor)
+        numeric_indices = indices_valor
+
+        total_ancho = float(sum(anchos)) if anchos else None
+        self.table.width = total_ancho
+        self.table_shell.width = (
+            int(total_ancho) if total_ancho is not None else None
+        )
+        self.table.fixed_left_columns = 0
+
+        self.table.columns = [
+            fdt.DataColumn2(
+                label=label_columna(i, h or ""),
+                fixed_width=anchos[i] if i < len(anchos) else None,
+                numeric=(i in numeric_indices),
+                heading_row_alignment=ft.MainAxisAlignment.CENTER,
+            )
+            for i, h in enumerate(encabezados)
+        ]
+
+        borde_identidad = ft.border.only(
+            right=ft.border.BorderSide(0.5, GREY_700)
+        )
+        self._indices_valor_cached = indices_valor
+
+        filas_nuevas = []
+        # Una fila por registro real: si no hay suficientes registros, no se rellenan celdas fantasma.
+        for row_idx in range(n_filas):
+            # matriz[0]=encabezado; fila[1]=clave id_concepto|identidad para rows_bd
+            fila = (
+                self.matriz[1 + row_idx] if 1 + row_idx < len(self.matriz) else None
+            )
+            registro = self.rows_bd.get(fila[1]) if fila else None
+
+            celdas = [
+                ft.DataCell(
+                    self._contenido_celda(
+                        col_idx, fila, registro, encabezados, indices_valor, borde_identidad
+                    )
+                )
+                for col_idx in range(num_cols)
+            ]
+            filas_nuevas.append(ft.DataRow(cells=celdas))
+        self.table.rows = filas_nuevas
+
+        # Menos filas que el tamaño de página: la tabla no estira y se ajusta la altura.
+        hr = self.table.heading_row_height or 40
+        dr = self.table.data_row_height or 26
+        sep = float(self.table.divider_thickness or 1)
+        if n_filas < self.limit:
+            self.table.expand = False
+            sep_extra = max(0, n_filas - 1) * sep
+            self.table.height = hr + n_filas * dr + sep_extra + 6
+        else:
+            self.table.expand = True
+            self.table.height = None
+
+    def _actualizar_tabla_paginacion(
+        self, encabezados: list, num_cols: int
+    ) -> None:
+        """Actualiza solo el contenido de celdas (columnas permanecen iguales)."""
+        indices_valor = getattr(self, "_indices_valor_cached", set())
+        borde_identidad = ft.border.only(
+            right=ft.border.BorderSide(0.5, GREY_700)
+        )
+
+        for row_idx in range(len(self.table.rows)):
+            fila = (
+                self.matriz[1 + row_idx] if 1 + row_idx < len(self.matriz) else None
+            )
+            registro = self.rows_bd.get(fila[1]) if fila else None
+
+            for col_idx in range(
+                min(num_cols, len(self.table.rows[row_idx].cells))
+            ):
+                self.table.rows[row_idx].cells[col_idx].content = self._contenido_celda(
+                    col_idx, fila, registro, encabezados, indices_valor, borde_identidad
+                )
+
     def _actualizar_tabla(self):
+        """Reconstruye o actualiza la grilla según cambie el esquema o sea paginación."""
         # Reiniciar mapa identidad -> control en cada reconstrucción de tabla
         self._control_por_identidad = {}
+
         encabezados = self.matriz[0]
         num_cols = len(encabezados)
         n_filas = self._filas_datos_visibles()
-        # Clave para saber si es paginación (mismo concepto): evita reconstruir columnas
+
         encabezados_key = tuple(encabezados)
         es_paginacion = (
             getattr(self, "_ultimos_encabezados", None) == encabezados_key
@@ -589,73 +711,11 @@ class HojaTrabajoPage(ft.Column):
         )
 
         if not es_paginacion:
-            self._ultimos_encabezados = encabezados_key  
-            col_valor = getattr(self, "_schema_columnas_valor", set()) 
-            anchos = calcular_anchos_columnas(
-                self._formatos_ui_uc, encabezados, col_valor, self._concepto_payload()
-            )
-            indices_valor = indices_columnas_numericas(encabezados, col_valor)  
-            numeric_indices = indices_valor
-            total_ancho = float(sum(anchos)) if anchos else None
-            self.table.width = total_ancho
-            self.table_shell.width = int(total_ancho) if total_ancho is not None else None
-            self.table.fixed_left_columns = 0
-
-            self.table.columns = [
-                fdt.DataColumn2(
-                    label=label_columna(i, h or ""),
-                    fixed_width=anchos[i] if i < len(anchos) else None,
-                    numeric=(i in numeric_indices),
-                    heading_row_alignment=ft.MainAxisAlignment.CENTER,
-                )
-                for i, h in enumerate(encabezados)
-            ]
-            borde_identidad = ft.border.only(right=ft.border.BorderSide(0.5, GREY_700))  # Borde vertical solo para columna Identidad
-            self._indices_valor_cached = indices_valor
-            filas_nuevas = []
-            # Solo una fila por registro real: antes se rellenaba hasta `limit` y quedaban filas vacías.
-            for row_idx in range(n_filas):
-                # matriz[0]=encabezado; fila[1]=clave id_concepto|identidad para rows_bd
-                fila = self.matriz[1 + row_idx] if 1 + row_idx < len(self.matriz) else None
-                registro = self.rows_bd.get(fila[1]) if fila else None
-                celdas = [
-                    ft.DataCell(self._contenido_celda(c, fila, registro, encabezados, indices_valor, borde_identidad))
-                    for c in range(num_cols)
-                ]
-                filas_nuevas.append(ft.DataRow(cells=celdas))
-            self.table.rows = filas_nuevas
-            # Menos filas que el tamaño de página: la tabla no estira celdas fantasma; el contenedor deja ver el fondo.
-            hr = self.table.heading_row_height or 40
-            dr = self.table.data_row_height or 26
-            sep = float(self.table.divider_thickness or 1)
-            if n_filas < self.limit:
-                self.table.expand = False
-                sep_extra = max(0, n_filas - 1) * sep
-                self.table.height = hr + n_filas * dr + sep_extra + 6
-            else:
-                self.table.expand = True
-                self.table.height = None
+            self._reconstruir_tabla(encabezados, num_cols, n_filas)
         else:
-            # Paginación: solo actualizar contenido de celdas existentes (columnas no cambian)
-            indices_valor = getattr(self, "_indices_valor_cached", set())
-            borde_identidad = ft.border.only(right=ft.border.BorderSide(0.5, GREY_700))
-            
-            for row_idx in range(len(self.table.rows)):
-                fila = self.matriz[1 + row_idx] if 1 + row_idx < len(self.matriz) else None
-                registro = self.rows_bd.get(fila[1]) if fila else None
-                for col_idx in range(min(num_cols, len(self.table.rows[row_idx].cells))):
-                    self.table.rows[row_idx].cells[col_idx].content = self._contenido_celda(
-                        col_idx, fila, registro, encabezados, indices_valor, borde_identidad
-                    )
+            self._actualizar_tabla_paginacion(encabezados, num_cols)
 
-        self.nav_row.controls[0].visible = not self.offset <= 0
-        has_more = getattr(self, "_has_more", False)
-        self.nav_row.controls[2].visible = has_more
-        pagina = (self.offset // self.limit) + 1 if self.limit else 1
-        total = getattr(self, "total_identidades", 0) or 0
-        total_paginas = max(1, (total + self.limit - 1) // self.limit) if self.limit else 1
-        self.pagination_text_footer.value = pagination_text_value(pagina, total_paginas)
-        self._page.update()
+        self._actualizar_paginacion_footer()
 
     # --- Navegación: paginar, buscar, concepto ---
     def _loader(self, v: bool):
@@ -719,20 +779,23 @@ class HojaTrabajoPage(ft.Column):
             btn(
                 "Insertar",
                 ft.Icons.ADD,
-                lambda e: self._abrir_dialogo_trabajo_deferred(
-                    "Preparando nuevo registro...",
-                    modo="nuevo",
-                    concepto=self._concepto_payload(),
-                )
-                if self.concepto_actual is not None
-                else self.mostrar_mensaje("Seleccione un concepto"),
+                lambda e: self._ejecutar_si_hay_concepto(
+                    lambda: self._abrir_dialogo_trabajo_deferred(
+                        "Preparando nuevo registro...",
+                        modo="nuevo",
+                        concepto=self._concepto_payload(),
+                    )
+                ),
             ),
             btn(
                 "Eliminar",
                 ft.Icons.DELETE_SHARP,
-                lambda e: self.dialog_trabajo.abrir(modo="eliminar", concepto=self._concepto_payload())
-                if self.concepto_actual is not None
-                else self.mostrar_mensaje("Seleccione un concepto"),
+                lambda e: self._ejecutar_si_hay_concepto(
+                    lambda: self.dialog_trabajo.abrir(
+                        modo="eliminar",
+                        concepto=self._concepto_payload(),
+                    )
+                ),
             ),
             btn("Actualizar hoja", ft.Icons.CLOUD_SYNC_OUTLINED, lambda e: self.cargar_datos()),
             menu(
@@ -777,12 +840,12 @@ class HojaTrabajoPage(ft.Column):
                             btn(
                                 "Tipo de fideicomiso",
                                 ft.Icons.ACCOUNT_BALANCE,
-                                lambda e: self.dialog_trabajo.abrir(
-                                    modo="fideicomiso_masivo",
-                                    concepto=self._concepto_payload(),
-                                )
-                                if self.concepto_actual is not None
-                                else self.mostrar_mensaje("Seleccione un concepto"),
+                                lambda e: self._ejecutar_si_hay_concepto(
+                                    lambda: self.dialog_trabajo.abrir(
+                                        modo="fideicomiso_masivo",
+                                        concepto=self._concepto_payload(),
+                                    )
+                                ),
                             )
                         )
             except Exception as e:
@@ -915,6 +978,13 @@ class HojaTrabajoPage(ft.Column):
         self.panel_herramientas.update()
 
     # --- Utilidades internas: herramientas (loader, snackbars, hilo) ---
+    def _ejecutar_si_hay_concepto(self, accion: Callable[[], None], mensaje_sin_concepto: str | None = None) -> None:
+        """Ejecuta `accion` solo con concepto elegido; evita repetir aviso en botones del toolbar."""
+        if self.concepto_actual is None:
+            self.mostrar_mensaje(mensaje_sin_concepto or "Seleccione un concepto")
+            return
+        accion()
+
     def _requiere_concepto(self) -> bool:
         """True si hay concepto seleccionado; si no, muestra aviso y retorna False."""
         if self.concepto_actual:

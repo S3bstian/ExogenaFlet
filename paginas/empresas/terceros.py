@@ -15,6 +15,15 @@ from paginas.utils.tooltips import TooltipId, tooltip
 from paginas.utils.banner_prefijo_ctrl import crear_banner_prefijo_ctrl, sync_banner_prefijo
 from utils.ui_sync import ejecutar_en_ui, loader_row_fin, loader_row_visibilidad
 
+_DEBOUNCE_BUSQUEDA_SEC = 0.35
+
+_COLUMNAS_TABLA_TERCEROS = [
+    "Seleccionar",
+    "Nombre",
+    "Identidad",
+    "Tipo Documento",
+]
+
 
 class TercerosDialog:
     def __init__(
@@ -28,8 +37,8 @@ class TercerosDialog:
     ):
         self.page = page
         self.consorcios_dialog = consorcios_dialog
-        self.trabajo_dialog = trabajo_dialog  # Para cuando se llama desde hoja de trabajo
-        self.modo_seleccion_unica = modo_seleccion_unica  # True = selección única, False = múltiple
+        self.trabajo_dialog = trabajo_dialog
+        self.modo_seleccion_unica = modo_seleccion_unica
         self.limit = 12
         self.offset = 0
         self.dialog_agregar = None
@@ -40,22 +49,21 @@ class TercerosDialog:
         self.checkboxes_terceros = {}
         self.mensaje = ft.Text("", size=14, italic=True, visible=False)
 
-        # ✅ NUEVO: persistencia global de selección
-        self.seleccion_global = {}  # {identidad: {"selected": bool, "data": dict}}
-        self.tercero_seleccionado_unico = None  # Para modo selección única
+        # Selección que sobrevive al cambiar de página (multiselect) o al filtrar (único usa otro campo).
+        self.seleccion_global = {}
+        self.tercero_seleccionado_unico = None
         self._buscar_handle = None
         self.total_terceros = 0
         self._terceros_uc = container.terceros_cartilla_uc
         self._consorcios_uc = container.consorcios_uc
-        # Buffer para Alt+prefijo de número de página
         self._page_prefix_buffer = ""
         self._page_prefix_timer = None
 
         from ui.progress import crear_loader_row, SIZE_SMALL
+
         self.loading_indicator = crear_loader_row("Cargando...", size=SIZE_SMALL)
         self.loading_indicator.visible = False
 
-        # buscador
         self.search_field = ft.TextField(
             label="Buscar",
             hint_text="Ej: 123456789 o Comercial S.A.",
@@ -68,14 +76,8 @@ class TercerosDialog:
             height=38,
         )
 
-        # tabla
         self.data_table = ft.DataTable(
-            columns=[
-                ft.DataColumn(ft.Text("Seleccionar")),
-                ft.DataColumn(ft.Text("Nombre")),
-                ft.DataColumn(ft.Text("Identidad")),
-                ft.DataColumn(ft.Text("Tipo Documento")),
-            ],
+            columns=[ft.DataColumn(ft.Text(c)) for c in _COLUMNAS_TABLA_TERCEROS],
             rows=[],
             column_spacing=10,
             data_row_max_height=35,
@@ -89,24 +91,17 @@ class TercerosDialog:
             expand=True,
             scroll=ft.ScrollMode.AUTO,
         )
-        
-        # Contenedor para RadioGroup (necesario para modo selección única)
+
         self.radio_group_container = ft.Container(visible=False, width=0, height=0)
         self.radio_group = None
         self._btn_cancelar_catalogo = None
         self._btn_seleccionar_catalogo = None
         self._acciones_catalogo_ocupado = False
 
-    # ===================== ABRIR =====================
-    def open_agregar_dialog(self):
-        """Abre el diálogo de selección de terceros.
-        Si modo_seleccion_unica=True, permite seleccionar solo un tercero.
-        Si modo_seleccion_unica=False, permite selección múltiple (modo consorcios).
-        """
-        # Siempre iniciar con selección limpia al abrir el catálogo
-        self.seleccion_global = {}
-        self.tercero_seleccionado_unico = None
+    def _titulo_seleccion_catalogo(self) -> str:
+        return "Seleccione un tercero:" if self.modo_seleccion_unica else "Seleccione los terceros:"
 
+    def _armar_barra_paginacion(self) -> ft.Row:
         self.pagination_text_footer = build_pagination_label(1, 1)
         self.btn_prev = ft.ElevatedButton(
             "Anterior",
@@ -124,32 +119,28 @@ class TercerosDialog:
             style=BOTON_SECUNDARIO,
             tooltip=tooltip(TooltipId.PAGINA_BTN_SIGUIENTE),
         )
-        self.nav_row = ft.Row(
+        return ft.Row(
             [self.btn_prev, self.pagination_text_footer, self.btn_next],
             alignment=ft.MainAxisAlignment.SPACE_AROUND,
-            margin=ft.margin.only(bottom=-20)
+            margin=ft.margin.only(bottom=-20),
         )
-        self._outer_banner_alt_pagina, self._txt_banner_alt_pagina = crear_banner_prefijo_ctrl(expand=False)
 
-        titulo_texto = "Seleccione un tercero:" if self.modo_seleccion_unica else "Seleccione los terceros:"
-        
-        contenido = ft.Column(
+    def _contenido_columna_catalogo(self, nav_row: ft.Row) -> ft.Column:
+        self._outer_banner_alt_pagina, self._txt_banner_alt_pagina = crear_banner_prefijo_ctrl(expand=False)
+        return ft.Column(
             [
                 ft.Row(
                     [
-                        ft.Text(titulo_texto, weight=ft.FontWeight.BOLD),
+                        ft.Text(self._titulo_seleccion_catalogo(), weight=ft.FontWeight.BOLD),
                         self.search_field,
                     ],
                     alignment=ft.MainAxisAlignment.SPACE_AROUND,
                 ),
-                ft.Row(
-                    [self._outer_banner_alt_pagina],
-                    alignment=ft.MainAxisAlignment.CENTER,
-                ),
+                ft.Row([self._outer_banner_alt_pagina], alignment=ft.MainAxisAlignment.CENTER),
                 self.loading_indicator,
-                self.radio_group_container,  # RadioGroup oculto pero funcional (solo para modo selección única)
+                self.radio_group_container,
                 self.table_container,
-                self.nav_row,
+                nav_row,
                 self.mensaje,
             ],
             spacing=10,
@@ -157,11 +148,19 @@ class TercerosDialog:
             alignment=ft.MainAxisAlignment.CENTER,
         )
 
-        # Determinar acción según el modo
-        if self.modo_seleccion_unica:
-            accion_seleccionar = self.seleccionar_tercero_unico
-        else:
-            accion_seleccionar = self.seleccionar_consorcios
+    def open_agregar_dialog(self):
+        """
+        Abre el catálogo: selección única (hoja de trabajo) o múltiple (consorcios).
+        """
+        self.seleccion_global = {}
+        self.tercero_seleccionado_unico = None
+
+        self.nav_row = self._armar_barra_paginacion()
+        contenido = self._contenido_columna_catalogo(self.nav_row)
+
+        accion_seleccionar = (
+            self.seleccionar_tercero_unico if self.modo_seleccion_unica else self.seleccionar_consorcios
+        )
 
         self._btn_cancelar_catalogo = ft.TextButton(
             content="Cancelar",
@@ -174,7 +173,7 @@ class TercerosDialog:
             style=BOTON_PRINCIPAL,
         )
         self.dialog_agregar = ft.AlertDialog(
-            title=ft.Text(f"Catalogo de terceros"),
+            title=ft.Text("Catálogo de terceros"),
             content=contenido,
             bgcolor=ft.Colors.WHITE,
             modal=True,
@@ -199,7 +198,6 @@ class TercerosDialog:
             prefix_alt=self._page_prefix_buffer,
         )
 
-    # ===================== CARGA =====================
     def cargar_terceros(self):
         self._cargar_terceros_async("Cargando terceros...")
 
@@ -220,6 +218,7 @@ class TercerosDialog:
                         limit=self.limit,
                     )
             except Exception as ex:
+
                 def _err():
                     self.ocultar_loader()
                     actualizar_mensaje_en_control(f"Error cargando terceros: {ex}", self.mensaje)
@@ -240,7 +239,6 @@ class TercerosDialog:
         self.page.run_thread(_worker)
 
     def _ir_a_pagina(self, pagina: int):
-        """Salta a la página indicada (1-based) respetando los límites dentro del diálogo."""
         if pagina < 1 or not self.limit:
             return
         total = self.total_terceros or 0
@@ -251,20 +249,25 @@ class TercerosDialog:
         self.offset = (pagina - 1) * self.limit
         self.cargar_terceros()
 
+    def _cancelar_timer_prefijo_pagina(self) -> None:
+        if self._page_prefix_timer:
+            try:
+                self._page_prefix_timer.cancel()
+            except Exception:
+                pass
+            self._page_prefix_timer = None
+
     def _on_keyboard_paginar(self, e: ft.KeyboardEvent):
         """
-        Re Pág / Av Pág para paginar la lista dentro del diálogo.
-        Alt + secuencia de dígitos: ir directamente a la página indicada.
+        Re Pág / Av Pág: paginar. Alt + dígitos: salto a número de página (debounce).
         """
         key = getattr(e, "key", "")
         alt = getattr(e, "alt", False)
         digit = normalize_digit_key(key)
 
-        # Alt + dígitos: ir directamente a número de página.
         if alt and digit is not None:
             self._page_prefix_buffer = (self._page_prefix_buffer or "") + digit
-            if self._page_prefix_timer:
-                self._page_prefix_timer.cancel()
+            self._cancelar_timer_prefijo_pagina()
             loop = self.page.session.connection.loop
 
             def _on_page_timeout():
@@ -286,14 +289,8 @@ class TercerosDialog:
         if tecla_es_solo_modificador(key):
             return
 
-        # Limpiar buffer de página en otras teclas y usar Re Pág / Av Pág para paginar +-1.
         self._page_prefix_buffer = ""
-        if self._page_prefix_timer:
-            try:
-                self._page_prefix_timer.cancel()
-            except Exception:
-                pass
-            self._page_prefix_timer = None
+        self._cancelar_timer_prefijo_pagina()
         self._banner_prefijos_sync()
 
         if tecla_es_repag(key):
@@ -301,7 +298,6 @@ class TercerosDialog:
         elif tecla_es_avpag(key):
             self.paginar(1)
 
-    # ===================== PAGINACIÓN =====================
     def paginar(self, direction: int):
         nuevo_offset = self.offset + (direction * self.limit)
         if nuevo_offset < 0:
@@ -312,7 +308,6 @@ class TercerosDialog:
 
         self._cargar_terceros_async("Paginando...", filtro=filtro)
 
-    # ===================== BUSCADOR =====================
     def _buscar_tercero(self, e: ft.ControlEvent):
         ft.context.disable_auto_update()
         if self._buscar_handle is not None:
@@ -320,90 +315,65 @@ class TercerosDialog:
         texto = (e.control.value or "").strip()
         self.offset = 0
         loop = self.page.session.connection.loop
-        self._buscar_handle = loop.call_later(0.35, lambda: self._buscar_tercero_ejecutar(texto))
+        self._buscar_handle = loop.call_later(
+            _DEBOUNCE_BUSQUEDA_SEC, lambda: self._buscar_tercero_ejecutar(texto)
+        )
 
     def _buscar_tercero_ejecutar(self, texto: str):
         self._cargar_terceros_async("Buscando...", filtro=texto)
 
-    # ===================== ACTUALIZAR TABLA =====================
-    def _actualizar_tabla(self):
-        self.data_table.rows.clear()
+    def _fila_tercero(self, checkbox: ft.Checkbox, t: dict, identidad_celda: str) -> ft.DataRow:
+        return ft.DataRow(
+            cells=[
+                ft.DataCell(checkbox),
+                ft.DataCell(ft.Text(t.get("razonsocial", ""))),
+                ft.DataCell(ft.Text(identidad_celda)),
+                ft.DataCell(ft.Text(t.get("tipodocumento", ""))),
+            ]
+        )
 
-        if not self.terceros_filtrados:
-            actualizar_mensaje_en_control("No se encontraron resultados. Cargue terceros en la cartilla", self.mensaje)
-        else:
-            self.mensaje.visible = False
-            
-            if self.modo_seleccion_unica:
-                # Modo selección única: usar Checkboxes con lógica de selección única
-                valor_seleccionado = str(self.tercero_seleccionado_unico.get("identidad")) if self.tercero_seleccionado_unico else None
-                
-                for t in self.terceros_filtrados:
-                    identidad = str(t.get("identidad"))
-                    checked = (valor_seleccionado == identidad)
-                    
-                    def crear_handler(id_val, tercero_data):
-                        def handler(e):
-                            # Si se marca este checkbox, desmarcar todos los demás
-                            if e.control.value:
-                                self.tercero_seleccionado_unico = tercero_data
-                                # Desmarcar otros checkboxes
-                                for other_id, other_cb in self.checkboxes_terceros.items():
-                                    if isinstance(other_cb, ft.Checkbox) and other_id != id_val:
-                                        other_cb.value = False
-                                self.page.update()
-                            else:
-                                # Si se desmarca, limpiar selección
-                                if self.tercero_seleccionado_unico and str(self.tercero_seleccionado_unico.get("identidad")) == id_val:
-                                    self.tercero_seleccionado_unico = None
-                        return handler
-                    
-                    cb = ft.Checkbox(
-                        value=checked,
-                        data=t,
-                        active_color=PINK_400,
-                        on_change=crear_handler(identidad, t),
-                    )
-                    
-                    self.checkboxes_terceros[identidad] = cb
-                    
-                    fila = ft.DataRow(
-                        cells=[
-                            ft.DataCell(cb),
-                            ft.DataCell(ft.Text(t.get("razonsocial", ""))),
-                            ft.DataCell(ft.Text(identidad)),
-                            ft.DataCell(ft.Text(t.get("tipodocumento", ""))),
-                        ]
-                    )
-                    self.data_table.rows.append(fila)
-            else:
-                # Modo selección múltiple: usar Checkboxes
-                for t in self.terceros_filtrados:
-                    identidad = t.get("identidad")
-                    checked = self.seleccion_global.get(identidad, {}).get("selected", False)
+    def _on_change_seleccion_unica(self, id_val: str, tercero_data: dict, e: ft.ControlEvent):
+        if e.control.value:
+            self.tercero_seleccionado_unico = tercero_data
+            for other_id, other_cb in self.checkboxes_terceros.items():
+                if isinstance(other_cb, ft.Checkbox) and other_id != id_val:
+                    other_cb.value = False
+            self.page.update()
+        elif self.tercero_seleccionado_unico and str(self.tercero_seleccionado_unico.get("identidad")) == id_val:
+            self.tercero_seleccionado_unico = None
 
-                    cb = ft.Checkbox(
-                        value=checked,
-                        data=t,
-                        active_color=PINK_400,
-                        on_change=lambda e, id=identidad, data=t: self._toggle_seleccion(id, data, e.control.value)
-                    )
+    def _armar_filas_tabla_unico(self, valor_seleccionado: str | None):
+        for t in self.terceros_filtrados:
+            identidad = str(t.get("identidad"))
+            checked = valor_seleccionado == identidad
+            cb = ft.Checkbox(
+                value=checked,
+                data=t,
+                active_color=PINK_400,
+                on_change=lambda e, iv=identidad, td=t: self._on_change_seleccion_unica(iv, td, e),
+            )
+            self.checkboxes_terceros[identidad] = cb
+            self.data_table.rows.append(self._fila_tercero(cb, t, identidad))
 
-                    self.checkboxes_terceros[identidad] = cb
+    def _armar_filas_tabla_multiselect(self):
+        for t in self.terceros_filtrados:
+            identidad = t.get("identidad")
+            checked = self.seleccion_global.get(identidad, {}).get("selected", False)
+            cb = ft.Checkbox(
+                value=checked,
+                data=t,
+                active_color=PINK_400,
+                on_change=lambda e, id=identidad, data=t: self._toggle_seleccion(id, data, e.control.value),
+            )
+            self.checkboxes_terceros[identidad] = cb
+            self.data_table.rows.append(self._fila_tercero(cb, t, str(identidad)))
 
-                    fila = ft.DataRow(
-                        cells=[
-                            ft.DataCell(cb),
-                            ft.DataCell(ft.Text(t.get("razonsocial", ""))),
-                            ft.DataCell(ft.Text(str(identidad))),
-                            ft.DataCell(ft.Text(t.get("tipodocumento", ""))),
-                        ]
-                    )
-                    self.data_table.rows.append(fila)
-
+    def _actualizar_paginacion_footer(self):
         self.btn_prev.visible = not self.offset <= 0
         if self.limit:
-            total_paginas = (self.total_terceros + self.limit - 1) // self.limit if self.total_terceros > 0 else 1
+            total_paginas = (
+                (self.total_terceros + self.limit - 1) // self.limit if self.total_terceros > 0 else 1
+            )
         else:
             total_paginas = 1
         pagina = (self.offset // self.limit) + 1 if self.limit else 1
@@ -411,16 +381,32 @@ class TercerosDialog:
         self.btn_next.visible = has_next
         total = self.total_terceros if self.total_terceros > 0 else None
         self.pagination_text_footer.value = pagination_text_value(pagina, total_paginas, total)
+
+    def _actualizar_tabla(self):
+        self.data_table.rows.clear()
+
+        if not self.terceros_filtrados:
+            actualizar_mensaje_en_control("No se encontraron resultados. Cargue terceros en la cartilla", self.mensaje)
+        else:
+            self.mensaje.visible = False
+
+            if self.modo_seleccion_unica:
+                valor = (
+                    str(self.tercero_seleccionado_unico.get("identidad"))
+                    if self.tercero_seleccionado_unico
+                    else None
+                )
+                self._armar_filas_tabla_unico(valor)
+            else:
+                self._armar_filas_tabla_multiselect()
+
+        self._actualizar_paginacion_footer()
         self.page.update()
 
-    # ✅ NUEVO MÉTODO: controla el estado global de selección
     def _toggle_seleccion(self, identidad, data, value):
         self.seleccion_global[identidad] = {"selected": value, "data": data}
-    
 
-    # ===================== SELECCIONAR TERCERO ÚNICO (para hoja de trabajo) =====================
     def seleccionar_tercero_unico(self, e):
-        """Selecciona un único tercero cuando se llama desde hoja de trabajo."""
         if not self.tercero_seleccionado_unico:
             actualizar_mensaje_en_control("Debe seleccionar un tercero", self.mensaje)
             return
@@ -430,7 +416,6 @@ class TercerosDialog:
 
         def _apply():
             try:
-                # Aplica el tercero seleccionado en la hoja de trabajo y cierra este diálogo.
                 if self.trabajo_dialog:
                     self.trabajo_dialog._aplicar_tercero_seleccionado(self.tercero_seleccionado_unico)
                 self.return_dialog()
@@ -440,9 +425,27 @@ class TercerosDialog:
 
         loop.call_later(0.05, _apply)
 
-    # ===================== SELECCIONAR =====================
+    def _identidades_en_consorcios_actuales(self) -> set:
+        if not self.consorcios_dialog:
+            return set()
+        return {c.get("identidad") for c in (self.consorcios_dialog.consorcios_data or [])}
+
+    def _plantilla_consorcio_desde_tercero(self, tercero: dict) -> dict:
+        tipos = self.consorcios_dialog.tipos_contrato if self.consorcios_dialog else []
+        return {
+            "identidad": tercero.get("identidad"),
+            "razonsocial": tercero.get("razonsocial", ""),
+            "tipodocumento": tercero.get("tipodocumento", ""),
+            "fidecomiso": 0,
+            "porcentaje": 0,
+            "tipo_contrato": tipos[0] if tipos else "",
+        }
+
     def seleccionar_consorcios(self, e):
-        # ✅ Toma las selecciones globales persistentes, no solo las visibles
+        if not self.consorcios_dialog:
+            actualizar_mensaje_en_control("No hay diálogo de consorcios activo.", self.mensaje)
+            return
+
         seleccionados = [d["data"] for d in self.seleccion_global.values() if d["selected"]]
 
         if not seleccionados:
@@ -454,25 +457,14 @@ class TercerosDialog:
         def _worker():
             nuevos = []
             errores = []
-            identidades_existentes = {
-                c.get("identidad") for c in (self.consorcios_dialog.consorcios_data or [])
-            }
+            identidades_existentes = self._identidades_en_consorcios_actuales()
 
             for tercero in seleccionados:
                 identidad = tercero.get("identidad")
                 if identidad in identidades_existentes:
                     continue
 
-                nuevo = {
-                    "identidad": identidad,
-                    "razonsocial": tercero.get("razonsocial", ""),
-                    "tipodocumento": tercero.get("tipodocumento", ""),
-                    "fidecomiso": 0,
-                    "porcentaje": 0,
-                    "tipo_contrato": self.consorcios_dialog.tipos_contrato[0]
-                    if self.consorcios_dialog.tipos_contrato
-                    else "",
-                }
+                nuevo = self._plantilla_consorcio_desde_tercero(tercero)
 
                 try:
                     new_id = self._consorcios_uc.crear_consorcio(nuevo)
@@ -500,7 +492,6 @@ class TercerosDialog:
 
         self.page.run_thread(_worker)
 
-    # ===================== UTILIDADES =====================
     def mostrar_loader(self, mensaje="Cargando..."):
         self._set_acciones_catalogo_ocupado(True)
         loader_row_visibilidad(self.page, self.loading_indicator, True, f" {mensaje}")
@@ -510,7 +501,7 @@ class TercerosDialog:
         loader_row_fin(self.page, self.loading_indicator)
 
     def _set_acciones_catalogo_ocupado(self, ocupado: bool):
-        """Bloquea acciones del diálogo durante operaciones para evitar doble ejecución."""
+        """Evita doble clic en Cancelar / Seleccionar mientras hay operación en curso."""
         self._acciones_catalogo_ocupado = ocupado
         if self._btn_cancelar_catalogo:
             self._btn_cancelar_catalogo.disabled = ocupado
@@ -518,12 +509,6 @@ class TercerosDialog:
             self._btn_seleccionar_catalogo.disabled = ocupado
 
     def return_dialog(self):
-        """
-        Cierra el diálogo de terceros y reabre el diálogo padre que lo originó,
-        siguiendo el mismo patrón que otros módulos:
-        - Si viene desde hoja de trabajo (selección única), reabre el diálogo de trabajo guardado.
-        - Si viene desde consorcios, reabre el diálogo de consorcios.
-        """
         self._page_prefix_buffer = ""
         if getattr(self, "_page_prefix_timer", None):
             try:
@@ -536,7 +521,7 @@ class TercerosDialog:
 
         if self.dialog_agregar:
             self.page.pop_dialog()
-            # Volver al diálogo de hoja de trabajo si existe uno guardado
+            self.page.on_keyboard_event = getattr(self, "_prev_keyboard", None)
             if self.modo_seleccion_unica and self.trabajo_dialog:
                 if (
                     hasattr(self.trabajo_dialog, "dialog_trabajo_guardado")
@@ -546,6 +531,5 @@ class TercerosDialog:
                         self.trabajo_dialog._set_apertura_tercero_ocupada(False)
                     self.page.show_dialog(self.trabajo_dialog.dialog_trabajo_guardado)
                     self.page.update()
-            # Volver al diálogo de consorcios cuando se invoca desde allí
             elif self.consorcios_dialog:
                 self.consorcios_dialog.open_consorcios_dialog()

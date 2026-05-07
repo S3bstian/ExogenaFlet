@@ -3,7 +3,7 @@
 import json
 from collections import defaultdict
 from datetime import date
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from application.ports.hoja_trabajo_ports import (
     ConceptoLegacyMap,
     ConceptoRef,
@@ -43,6 +43,345 @@ from infrastructure.persistence.firebird.hoja_trabajo_persistencia import (
 from core import session
 
 
+def _payload_undo_desde_blob(payload_blob: Any) -> dict:
+    """Decodifica JSON almacenado en BLOB o string del registro UNDO."""
+    payload_str = payload_blob.read() if hasattr(payload_blob, "read") else str(payload_blob or "{}")
+    return json.loads(payload_str)
+
+
+def _ids_csv(ids: List[Any]) -> str:
+    """Convierte lista de IDs a CSV para cláusulas IN; retorna '0' cuando viene vacía."""
+    return ",".join(str(x) for x in ids) if ids else "0"
+
+
+def _restar_monto_en_atributo_base(
+    cur: Any,
+    *,
+    id_concepto: int,
+    attr_id: int,
+    identidad: str,
+    monto: Any,
+) -> None:
+    """Resta un monto sobre un atributo base de la identidad si existe fila actual."""
+    cur.execute(
+        "SELECT VALOR FROM HOJA_TRABAJO WHERE IDCONCEPTO = ? AND IDATRIBUTO = ? AND TRIM(IDENTIDADTERCERO) = TRIM(?)",
+        (id_concepto, attr_id, identidad),
+    )
+    r = cur.fetchone()
+    if not r:
+        return
+    base = _to_float(r[0])
+    nuevo = base - _to_float(monto)
+    cur.execute(
+        "UPDATE HOJA_TRABAJO SET VALOR = ? WHERE IDCONCEPTO = ? AND IDATRIBUTO = ? AND TRIM(IDENTIDADTERCERO) = TRIM(?)",
+        (str(nuevo) if nuevo != 0 else "0", id_concepto, attr_id, identidad),
+    )
+
+
+def _restar_sumas_por_atributo(
+    cur: Any,
+    *,
+    id_concepto: int,
+    identidad_base: str,
+    sumas_por_attr: Dict[Any, Any],
+) -> None:
+    """Aplica resta por atributo para un payload de undo ignorando claves no numéricas."""
+    for attr_id_str, monto in sumas_por_attr.items():
+        try:
+            attr_id = int(attr_id_str)
+        except (ValueError, TypeError):
+            continue
+        _restar_monto_en_atributo_base(
+            cur,
+            id_concepto=id_concepto,
+            attr_id=attr_id,
+            identidad=identidad_base,
+            monto=monto,
+        )
+
+
+def _where_concepto_filtro_hoja(
+    legacy_concepto: Optional[Any],
+    filtro: Optional[str],
+) -> Tuple[str, List[Any]]:
+    """Arma WHERE y parámetros compartidos por el conteo, la paginación de claves y el detalle de filas."""
+    conds_rows: List[str] = []
+    params: List[Any] = []
+
+    if legacy_concepto:
+        if isinstance(legacy_concepto, dict) and "codigo" in legacy_concepto and "formato" in legacy_concepto:
+            id_concepto = consultar_id_concepto(
+                legacy_concepto["codigo"], legacy_concepto["formato"]
+            )
+            if id_concepto:
+                conds_rows.append("c.ID = ?")
+                params.append(id_concepto)
+        elif isinstance(legacy_concepto, (int, str)) and str(legacy_concepto).isdigit():
+            conds_rows.append("c.ID = ?")
+            params.append(int(legacy_concepto))
+        else:
+            conds_rows.append("c.CODIGO = ?")
+            params.append(str(legacy_concepto))
+
+    if filtro:
+        conds_rows.append("UPPER(ht.IDENTIDADTERCERO) LIKE UPPER(?)")
+        params.append(f"%{filtro}%")
+
+    where_clause = "WHERE " + " AND ".join(conds_rows) if conds_rows else ""
+    return where_clause, params
+
+
+def _solo_conceptos_desde_hoja(cur: Any) -> List[ConceptoLegacyMap]:
+    """Lista códigos/formatos distintos que tienen filas en HOJA_TRABAJO."""
+    cur.execute(
+        """
+        SELECT c.CODIGO, f.FORMATO
+        FROM (
+            SELECT DISTINCT IDCONCEPTO FROM HOJA_TRABAJO
+        ) ht
+        INNER JOIN CONCEPTOS c ON c.ID = ht.IDCONCEPTO
+        INNER JOIN FORMATOS f ON f.ID = c.IDFORMATO
+        ORDER BY c.CODIGO, f.FORMATO
+        """
+    )
+    rows = cur.fetchall()
+    return [{"codigo": row[0], "formato": row[1]} for row in rows]
+
+
+def _registros_ui_desde_grupos_hoja(groups: List[Any]) -> Dict[str, dict]:
+    """Convierte grupos de `agrupar_filas_hoja` al dict expuesto a la UI por identidad/concepto."""
+    resultado: Dict[str, dict] = {}
+    for grupo in groups:
+        clave = grupo["group_key"]
+        identidad = grupo["identidad"]
+        registro_agrupado: Dict[str, Any] = {}
+        for row in grupo["rows"]:
+            descripcion = row[5]
+            valor = row[7]
+            if descripcion != "Número de Identificación":
+                registro_agrupado[descripcion] = valor or ""
+        registro_agrupado["FORMATO"] = grupo["rows"][0][6]
+        registro_agrupado["Concepto"] = grupo["rows"][0][4]
+        registro_agrupado["Número de Identificación"] = identidad
+        registro_agrupado["id_concepto"] = grupo["id_concepto"]
+        resultado[clave] = registro_agrupado
+    return resultado
+
+
+def _consultar_hoja_paginada_en_cursor(
+    cur: Any,
+    *,
+    offset: int,
+    limit: int,
+    legacy_concepto: Optional[Any],
+    filtro: Optional[str],
+) -> ResultadoHojaPaginada:
+    """Consulta paginada de la hoja: total, página de claves, detalle y mapa para la grilla."""
+    where_clause, params = _where_concepto_filtro_hoja(legacy_concepto, filtro)
+
+    sql_total = (
+        """
+        SELECT COUNT(*)
+        FROM (
+            SELECT DISTINCT
+                TRIM(ht.IDENTIDADTERCERO) AS IDENTIDADTERCERO,
+                ht.IDCONCEPTO
+            FROM HOJA_TRABAJO ht
+            INNER JOIN CONCEPTOS c ON c.ID = ht.IDCONCEPTO
+        """
+        + where_clause
+        + """
+        ) x
+        """
+    )
+    cur.execute(sql_total, tuple(params))
+    row_total = cur.fetchone()
+    total_identidades = int(row_total[0]) if row_total and row_total[0] is not None else 0
+
+    sql_keys = (
+        """
+        SELECT FIRST ? SKIP ?
+            ht.IDENTIDADTERCERO,
+            ht.IDCONCEPTO
+        FROM HOJA_TRABAJO ht
+        INNER JOIN CONCEPTOS c ON c.ID = ht.IDCONCEPTO
+        """
+        + where_clause
+        + """
+        GROUP BY ht.IDENTIDADTERCERO, ht.IDCONCEPTO
+        ORDER BY ht.IDENTIDADTERCERO, ht.IDCONCEPTO
+        """
+    )
+    cur.execute(sql_keys, tuple([limit, offset] + params))
+    pares_pagina = cur.fetchall()
+    if not pares_pagina:
+        return ({}, False, total_identidades)
+
+    cur.execute(sql_keys, tuple([1, offset + limit] + params))
+    has_more = cur.fetchone() is not None
+
+    cond_pares = " OR ".join(
+        ["(TRIM(ht.IDENTIDADTERCERO) = ? AND ht.IDCONCEPTO = ?)"] * len(pares_pagina)
+    )
+    params_rows = list(params)
+    for ident, id_c in pares_pagina:
+        params_rows.append(str(ident).strip() if ident else "")
+        params_rows.append(id_c)
+    sql_rows = (
+        """
+        SELECT
+            ht.ID,
+            ht.IDCONCEPTO,
+            ht.IDATRIBUTO,
+            ht.IDELEMENTO,
+            c.CODIGO AS CODIGO,
+            a.DESCRIPCION,
+            f.FORMATO,
+            ht.VALOR,
+            ht.IDENTIDADTERCERO
+        FROM HOJA_TRABAJO ht
+        INNER JOIN ELEMENTOS e ON e.ID = ht.IDELEMENTO
+        INNER JOIN ATRIBUTOS a ON a.ID = ht.IDATRIBUTO
+        INNER JOIN FORMATOS f ON f.ID = e.IDFORMATO
+        INNER JOIN CONCEPTOS c ON c.ID = ht.IDCONCEPTO
+        """
+        + where_clause
+        + """
+        AND ("""
+        + cond_pares
+        + """)
+        ORDER BY ht.IDENTIDADTERCERO, ht.IDCONCEPTO, ht.ID
+        """
+    )
+    cur.execute(sql_rows, tuple(params_rows))
+    rows = cur.fetchall()
+    groups = agrupar_filas_hoja(
+        rows,
+        get_id=lambda row: row[0],
+        get_id_concepto=lambda row: row[1],
+        get_identidad=lambda row: row[8],
+    )
+    resultado = _registros_ui_desde_grupos_hoja(groups)
+    return (resultado, has_more, total_identidades)
+
+
+def _resolver_concepto_y_elemento_entrada(
+    cur: Any,
+    codigo_concepto: str,
+    formato_concepto: str,
+) -> Optional[Tuple[int, int]]:
+    """
+    Obtiene (id_concepto, id_elemento) según si el payload trae formato o solo código.
+    Retorna None si no existe fila.
+    """
+    if formato_concepto:
+        id_concepto = consultar_id_concepto(codigo_concepto, formato_concepto)
+        if id_concepto is None:
+            return None
+        cur.execute(
+            """
+            SELECT c.ID, e.ID
+            FROM CONCEPTOS c
+            INNER JOIN ELEMENTOS e ON e.idconcepto = c.ID
+            WHERE c.ID = ?
+            """,
+            (id_concepto,),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT c.ID, e.ID
+            FROM CONCEPTOS c
+            INNER JOIN ELEMENTOS e ON e.idconcepto = c.ID
+            WHERE c.codigo = ?
+            """,
+            (codigo_concepto,),
+        )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return int(row[0]), int(row[1])
+
+
+def _resolver_id_concepto_para_undo(
+    legacy_concepto: Any,
+    mensaje_tipo_invalido: str = "Concepto debe ser un diccionario con 'codigo' y 'formato'",
+) -> Union[int, str]:
+    """
+    Resuelve el ID de concepto para operaciones de deshacer.
+    Retorna mensaje de error (str) cuando el concepto no es válido o no existe.
+    """
+    if not isinstance(legacy_concepto, dict) or "codigo" not in legacy_concepto or "formato" not in legacy_concepto:
+        return mensaje_tipo_invalido
+    concepto_codigo = legacy_concepto["codigo"]
+    formato_codigo = legacy_concepto["formato"]
+    id_concepto = consultar_id_concepto(concepto_codigo, formato_codigo)
+    if id_concepto is None:
+        return f"Concepto no encontrado: {concepto_codigo} - {formato_codigo}"
+    return id_concepto
+
+
+def _actualizar_valor_entrada_por_descripcion(
+    cur: Any,
+    *,
+    valor: Any,
+    id_concepto: int,
+    identidad: str,
+    codigo_concepto: str,
+    formato_concepto: str,
+    descripcion: str,
+) -> None:
+    """Actualiza `HOJA_TRABAJO.VALOR` resolviendo `IDATRIBUTO` por descripción y concepto."""
+    if formato_concepto:
+        cur.execute(
+            """
+            UPDATE HOJA_TRABAJO ht
+            SET ht.VALOR = ?
+            WHERE ht.IDCONCEPTO = ? AND TRIM(ht.IDENTIDADTERCERO) = TRIM(?)
+            AND ht.IDATRIBUTO = (
+                SELECT a.ID
+                FROM CONCEPTOS c
+                INNER JOIN FORMATOS f ON f.ID = c.IDFORMATO
+                JOIN ELEMENTOS e ON e.IDCONCEPTO = c.ID
+                JOIN ATRIBUTOS a ON a.IDELEMENTO = e.ID
+                WHERE c.CODIGO = ? AND f.FORMATO = ?
+                AND a.DESCRIPCION = ?
+            )
+            """,
+            (
+                valor or "",
+                id_concepto,
+                identidad,
+                codigo_concepto,
+                formato_concepto,
+                descripcion,
+            ),
+        )
+        return
+    cur.execute(
+        """
+        UPDATE HOJA_TRABAJO ht
+        SET ht.VALOR = ?
+        WHERE ht.IDCONCEPTO = ? AND TRIM(ht.IDENTIDADTERCERO) = TRIM(?)
+        AND ht.IDATRIBUTO = (
+            SELECT a.ID
+            FROM CONCEPTOS c
+            JOIN ELEMENTOS e ON e.IDCONCEPTO = c.ID
+            JOIN ATRIBUTOS a ON a.IDELEMENTO = e.ID
+            WHERE c.CODIGO = ?
+            AND a.DESCRIPCION = ?
+        )
+        """,
+        (
+            valor or "",
+            id_concepto,
+            identidad,
+            codigo_concepto,
+            descripcion,
+        ),
+    )
+
+
 class FirebirdHojaTrabajoRepository:
     """Implementación Firebird del puerto de hoja de trabajo."""
 
@@ -69,156 +408,35 @@ class FirebirdHojaTrabajoRepository:
         if offset < 0 or limit < 0:
             raise ValueError("offset y limit deben ser valores no negativos")
         legacy_concepto = self._legacy_concepto(concepto)
+        conn = None
+        cur = None
         try:
             conn = CNX_BDHelisa("EX", session.EMPRESA_ACTUAL["codigo"], "sysdba")
             cur = conn.cursor()
 
             if solo_conceptos:
-                cur.execute(
-                    """
-                    SELECT c.CODIGO, f.FORMATO
-                    FROM (
-                        SELECT DISTINCT IDCONCEPTO FROM HOJA_TRABAJO
-                    ) ht
-                    INNER JOIN CONCEPTOS c ON c.ID = ht.IDCONCEPTO
-                    INNER JOIN FORMATOS f ON f.ID = c.IDFORMATO
-                    ORDER BY c.CODIGO, f.FORMATO
-                    """
-                )
-                rows = cur.fetchall()
-                cur.close()
-                conn.close()
-                return [{"codigo": r[0], "formato": r[1]} for r in rows]
+                return _solo_conceptos_desde_hoja(cur)
 
-            conds_rows = []
-            params = []
-
-            if legacy_concepto:
-                if isinstance(legacy_concepto, dict) and "codigo" in legacy_concepto and "formato" in legacy_concepto:
-                    id_concepto = consultar_id_concepto(
-                        legacy_concepto["codigo"], legacy_concepto["formato"]
-                    )
-                    if id_concepto:
-                        conds_rows.append("c.ID = ?")
-                        params.append(id_concepto)
-                elif isinstance(legacy_concepto, (int, str)) and str(legacy_concepto).isdigit():
-                    conds_rows.append("c.ID = ?")
-                    params.append(int(legacy_concepto))
-                else:
-                    conds_rows.append("c.CODIGO = ?")
-                    params.append(str(legacy_concepto))
-
-            if filtro:
-                conds_rows.append("UPPER(ht.IDENTIDADTERCERO) LIKE UPPER(?)")
-                params.append(f"%{filtro}%")
-
-            where_clause = "WHERE " + " AND ".join(conds_rows) if conds_rows else ""
-
-            sql_total = (
-                """
-                SELECT COUNT(*)
-                FROM (
-                    SELECT DISTINCT
-                        TRIM(ht.IDENTIDADTERCERO) AS IDENTIDADTERCERO,
-                        ht.IDCONCEPTO
-                    FROM HOJA_TRABAJO ht
-                    INNER JOIN CONCEPTOS c ON c.ID = ht.IDCONCEPTO
-                """
-                + where_clause
-                + """
-                ) x
-                """
+            return _consultar_hoja_paginada_en_cursor(
+                cur,
+                offset=offset,
+                limit=limit,
+                legacy_concepto=legacy_concepto,
+                filtro=filtro,
             )
-            cur.execute(sql_total, tuple(params))
-            row_total = cur.fetchone()
-            total_identidades = int(row_total[0]) if row_total and row_total[0] is not None else 0
-
-            sql_keys = (
-                """
-                SELECT FIRST ? SKIP ?
-                    ht.IDENTIDADTERCERO,
-                    ht.IDCONCEPTO
-                FROM HOJA_TRABAJO ht
-                INNER JOIN CONCEPTOS c ON c.ID = ht.IDCONCEPTO
-                """
-                + where_clause
-                + """
-                GROUP BY ht.IDENTIDADTERCERO, ht.IDCONCEPTO
-                ORDER BY ht.IDENTIDADTERCERO, ht.IDCONCEPTO
-                """
-            )
-            cur.execute(sql_keys, tuple([limit, offset] + params))
-            pares_pagina = cur.fetchall()
-            if not pares_pagina:
-                cur.close()
-                conn.close()
-                return ({}, False, total_identidades)
-
-            cur.execute(sql_keys, tuple([1, offset + limit] + params))
-            has_more = cur.fetchone() is not None
-
-            cond_pares = " OR ".join(
-                ["(TRIM(ht.IDENTIDADTERCERO) = ? AND ht.IDCONCEPTO = ?)"] * len(pares_pagina)
-            )
-            params_rows = list(params)
-            for ident, id_c in pares_pagina:
-                params_rows.append(str(ident).strip() if ident else "")
-                params_rows.append(id_c)
-            sql_rows = (
-                """
-                SELECT
-                    ht.ID,
-                    ht.IDCONCEPTO,
-                    ht.IDATRIBUTO,
-                    ht.IDELEMENTO,
-                    c.CODIGO AS CODIGO,
-                    a.DESCRIPCION,
-                    f.FORMATO,
-                    ht.VALOR,
-                    ht.IDENTIDADTERCERO
-                FROM HOJA_TRABAJO ht
-                INNER JOIN ELEMENTOS e ON e.ID = ht.IDELEMENTO
-                INNER JOIN ATRIBUTOS a ON a.ID = ht.IDATRIBUTO
-                INNER JOIN FORMATOS f ON f.ID = e.IDFORMATO
-                INNER JOIN CONCEPTOS c ON c.ID = ht.IDCONCEPTO
-                """
-                + where_clause
-                + """
-                AND ("""
-                + cond_pares
-                + """)
-                ORDER BY ht.IDENTIDADTERCERO, ht.IDCONCEPTO, ht.ID
-                """
-            )
-            cur.execute(sql_rows, tuple(params_rows))
-            rows = cur.fetchall()
-            groups = agrupar_filas_hoja(
-                rows,
-                get_id=lambda r: r[0],
-                get_id_concepto=lambda r: r[1],
-                get_identidad=lambda r: r[8],
-            )
-            cur.close()
-            conn.close()
-            resultado = {}
-            for grupo in groups:
-                clave = grupo["group_key"]
-                identidad = grupo["identidad"]
-                registro_agrupado = {}
-                for r in grupo["rows"]:
-                    descripcion = r[5]
-                    valor = r[7]
-                    if descripcion != "Número de Identificación":
-                        registro_agrupado[descripcion] = valor or ""
-                registro_agrupado["FORMATO"] = grupo["rows"][0][6]
-                registro_agrupado["Concepto"] = grupo["rows"][0][4]
-                registro_agrupado["Número de Identificación"] = identidad
-                registro_agrupado["id_concepto"] = grupo["id_concepto"]
-                resultado[clave] = registro_agrupado
-
-            return (resultado, has_more, total_identidades)
         except Exception:
             return ({}, False, 0) if not solo_conceptos else []
+        finally:
+            if cur is not None:
+                try:
+                    cur.close()
+                except Exception:
+                    pass
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def obtener_conceptos(
         self,
@@ -263,8 +481,8 @@ class FirebirdHojaTrabajoRepository:
                 return "Clave de destino inválida."
 
             identidades: List[str] = []
-            for c in claves:
-                id_c, ident = _parsear_clave(c)
+            for clave_grupo in claves:
+                id_c, ident = _parsear_clave(clave_grupo)
                 if id_c != id_concepto:
                     return "Todas las filas deben ser del mismo concepto."
                 identidades.append(ident)
@@ -525,8 +743,8 @@ class FirebirdHojaTrabajoRepository:
                             """,
                             (id_concepto, attr_id, cc_identidad),
                         )
-                        r = cur.fetchone()
-                        base = _to_float(r[0]) if r else 0.0
+                        row_valor_actual = cur.fetchone()
+                        base = _to_float(row_valor_actual[0]) if row_valor_actual else 0.0
                         nuevo = base + total
                         cur.execute(
                             """
@@ -588,45 +806,30 @@ class FirebirdHojaTrabajoRepository:
 
     def deshacer_agrupar_cuantias(self, concepto: ConceptoRef) -> str:
         legacy_concepto = self._legacy_concepto(concepto)
-        if not isinstance(legacy_concepto, dict) or "codigo" not in legacy_concepto or "formato" not in legacy_concepto:
-            return "Concepto debe ser un diccionario con 'codigo' y 'formato'"
+        id_concepto_o_error = _resolver_id_concepto_para_undo(legacy_concepto)
+        if isinstance(id_concepto_o_error, str):
+            return id_concepto_o_error
+        id_concepto = id_concepto_o_error
         try:
             with transaccion_segura() as (_con, cur):
-                id_concepto = consultar_id_concepto(
-                    legacy_concepto["codigo"], legacy_concepto["formato"]
-                )
-                if id_concepto is None:
-                    return f"Concepto no encontrado: {legacy_concepto['codigo']} - {legacy_concepto['formato']}"
                 registros = fetch_undo_registros_por_tipo(cur, 0, id_concepto)
                 if not registros:
                     return "No hay agrupaciones para deshacer en este concepto."
                 total_registros = 0
                 for undo_id, payload_blob in registros:
-                    payload_str = payload_blob.read() if hasattr(payload_blob, "read") else str(payload_blob or "{}")
-                    pl = json.loads(payload_str)
+                    pl = _payload_undo_desde_blob(payload_blob)
                     cc_identidad = pl.get("cc_identidad", "").strip()
                     cc_existia = pl.get("cc_existia", False)
                     suma_restar = pl.get("suma_restar", {}) or {}
                     filas = pl.get("filas_restaurar", [])
 
                     if cc_existia:
-                        for attr_id_str, monto in suma_restar.items():
-                            try:
-                                attr_id = int(attr_id_str)
-                            except (ValueError, TypeError):
-                                continue
-                            cur.execute(
-                                "SELECT VALOR FROM HOJA_TRABAJO WHERE IDCONCEPTO = ? AND IDATRIBUTO = ? AND TRIM(IDENTIDADTERCERO) = TRIM(?)",
-                                (id_concepto, attr_id, cc_identidad),
-                            )
-                            r = cur.fetchone()
-                            if r:
-                                base = _to_float(r[0])
-                                nuevo = base - _to_float(monto)
-                                cur.execute(
-                                    "UPDATE HOJA_TRABAJO SET VALOR = ? WHERE IDCONCEPTO = ? AND IDATRIBUTO = ? AND TRIM(IDENTIDADTERCERO) = TRIM(?)",
-                                    (str(nuevo) if nuevo != 0 else "0", id_concepto, attr_id, cc_identidad),
-                                )
+                        _restar_sumas_por_atributo(
+                            cur,
+                            id_concepto=id_concepto,
+                            identidad_base=cc_identidad,
+                            sumas_por_attr=suma_restar,
+                        )
                     else:
                         cur.execute(
                             "DELETE FROM HOJA_TRABAJO WHERE IDCONCEPTO = ? AND TRIM(IDENTIDADTERCERO) = TRIM(?)",
@@ -885,36 +1088,32 @@ class FirebirdHojaTrabajoRepository:
 
     def deshacer_numerar_nits(self, concepto: ConceptoRef) -> str:
         legacy_concepto = self._legacy_concepto(concepto)
-        if not isinstance(legacy_concepto, dict) or "codigo" not in legacy_concepto or "formato" not in legacy_concepto:
-            return "Concepto debe ser un diccionario con 'codigo' y 'formato'"
+        id_concepto_o_error = _resolver_id_concepto_para_undo(legacy_concepto)
+        if isinstance(id_concepto_o_error, str):
+            return id_concepto_o_error
+        id_concepto = id_concepto_o_error
         try:
             with transaccion_segura() as (_con, cur):
-                id_concepto = consultar_id_concepto(
-                    legacy_concepto["codigo"], legacy_concepto["formato"]
-                )
-                if id_concepto is None:
-                    return f"Concepto no encontrado: {legacy_concepto['codigo']} - {legacy_concepto['formato']}"
                 registros = fetch_undo_registros_por_tipo(cur, 1, id_concepto)
                 if not registros:
                     return "No hay numeraciones para deshacer en este concepto."
                 total_registros = 0
                 for undo_id, payload_blob in registros:
-                    payload_str = payload_blob.read() if hasattr(payload_blob, "read") else str(payload_blob or "{}")
-                    pl = json.loads(payload_str)
+                    pl = _payload_undo_desde_blob(payload_blob)
                     base_solo = pl.get("base_solo", "")
                     contador_ini = int(pl.get("contador_ini", 1))
                     items = pl.get("items", [])
                     id_atr_razon = pl.get("id_atr_razon")
                     ids_atr_ident = pl.get("ids_atr_ident", []) or []
                     ids_tdoc = pl.get("ids_tdoc", []) or []
-                    ids_tdoc_str = ",".join(str(x) for x in ids_tdoc) if ids_tdoc else "0"
-                    ids_atr_ident_str = ",".join(str(x) for x in ids_atr_ident) if ids_atr_ident else "0"
+                    ids_tdoc_str = _ids_csv(ids_tdoc)
+                    ids_atr_ident_str = _ids_csv(ids_atr_ident)
 
-                    for i, it in enumerate(items):
-                        ant = (it.get("ant") or "").strip()
-                        razon = it.get("razon") or ""
-                        ident_val = (it.get("ident_val") or ant).strip()
-                        nueva = f"{base_solo}{contador_ini + i:03d}"
+                    for index, item in enumerate(items):
+                        ant = (item.get("ant") or "").strip()
+                        razon = item.get("razon") or ""
+                        ident_val = (item.get("ident_val") or ant).strip()
+                        nueva = f"{base_solo}{contador_ini + index:03d}"
                         nueva_padded = nueva.ljust(20)
                         ant_padded = ant.ljust(20)
 
@@ -945,44 +1144,29 @@ class FirebirdHojaTrabajoRepository:
 
     def deshacer_unificar(self, concepto: ConceptoRef) -> str:
         legacy_concepto = self._legacy_concepto(concepto)
-        if not isinstance(legacy_concepto, dict) or "codigo" not in legacy_concepto or "formato" not in legacy_concepto:
-            return "Concepto debe ser un diccionario con 'codigo' y 'formato'"
+        id_concepto_o_error = _resolver_id_concepto_para_undo(legacy_concepto)
+        if isinstance(id_concepto_o_error, str):
+            return id_concepto_o_error
+        id_concepto = id_concepto_o_error
         try:
             with transaccion_segura() as (_con, cur):
-                id_concepto = consultar_id_concepto(
-                    legacy_concepto["codigo"], legacy_concepto["formato"]
-                )
-                if id_concepto is None:
-                    return f"Concepto no encontrado: {legacy_concepto['codigo']} - {legacy_concepto['formato']}"
                 registros = fetch_undo_registros_por_tipo(cur, 2, id_concepto)
                 if not registros:
                     return "No hay unificaciones para deshacer en este concepto."
                 total_registros = 0
                 for undo_id, payload_blob in registros:
-                    payload_str = payload_blob.read() if hasattr(payload_blob, "read") else str(payload_blob or "{}")
-                    pl = json.loads(payload_str)
+                    pl = _payload_undo_desde_blob(payload_blob)
                     base_id = str(pl.get("base_id", "") or "").strip()
                     sumas = pl.get("sumas", {}) or {}
                     filas = pl.get("filas_restaurar", [])
                     idelemento = pl.get("idelemento")
 
-                    for attr_id_str, monto in sumas.items():
-                        try:
-                            attr_id = int(attr_id_str)
-                        except (ValueError, TypeError):
-                            continue
-                        cur.execute(
-                            "SELECT VALOR FROM HOJA_TRABAJO WHERE IDCONCEPTO = ? AND IDATRIBUTO = ? AND TRIM(IDENTIDADTERCERO) = TRIM(?)",
-                            (id_concepto, attr_id, base_id),
-                        )
-                        r = cur.fetchone()
-                        if r:
-                            base = _to_float(r[0])
-                            nuevo = base - _to_float(monto)
-                            cur.execute(
-                                "UPDATE HOJA_TRABAJO SET VALOR = ? WHERE IDCONCEPTO = ? AND IDATRIBUTO = ? AND TRIM(IDENTIDADTERCERO) = TRIM(?)",
-                                (str(nuevo) if nuevo != 0 else "0", id_concepto, attr_id, base_id),
-                            )
+                    _restar_sumas_por_atributo(
+                        cur,
+                        id_concepto=id_concepto,
+                        identidad_base=base_id,
+                        sumas_por_attr=sumas,
+                    )
 
                     identidades_restauradas = set()
                     for f in filas:
@@ -1014,35 +1198,10 @@ class FirebirdHojaTrabajoRepository:
                 codigo_concepto = datos["Concepto"]
                 formato_concepto = datos.get("FORMATO", "")
 
-                if formato_concepto:
-                    id_concepto = consultar_id_concepto(codigo_concepto, formato_concepto)
-                    if id_concepto is None:
-                        return False
-                    cur.execute(
-                        """
-                        SELECT c.ID, e.ID
-                        FROM CONCEPTOS c
-                        INNER JOIN ELEMENTOS e ON e.idconcepto = c.ID
-                        WHERE c.ID = ?
-                        """,
-                        (id_concepto,),
-                    )
-                else:
-                    cur.execute(
-                        """
-                        SELECT c.ID, e.ID
-                        FROM CONCEPTOS c
-                        INNER JOIN ELEMENTOS e ON e.idconcepto = c.ID
-                        WHERE c.codigo = ?
-                        """,
-                        (codigo_concepto,),
-                    )
-
-                row = cur.fetchone()
-                if not row:
+                par_ce = _resolver_concepto_y_elemento_entrada(cur, codigo_concepto, formato_concepto)
+                if par_ce is None:
                     return False
-
-                concepto, elemento = row
+                concepto, elemento = par_ce
 
                 if formato_concepto:
                     concepto_para_atributos = {
@@ -1080,54 +1239,15 @@ class FirebirdHojaTrabajoRepository:
 
                 for llave, valor in datos.items():
                     if llave not in ("FORMATO", "Concepto", "id_concepto"):
-                        if formato_concepto:
-                            cur.execute(
-                                """
-                                UPDATE HOJA_TRABAJO ht
-                                SET ht.VALOR = ?
-                                WHERE ht.IDCONCEPTO = ? AND TRIM(ht.IDENTIDADTERCERO) = TRIM(?)
-                                AND ht.IDATRIBUTO = (
-                                    SELECT a.ID
-                                    FROM CONCEPTOS c
-                                    INNER JOIN FORMATOS f ON f.ID = c.IDFORMATO
-                                    JOIN ELEMENTOS e ON e.IDCONCEPTO = c.ID
-                                    JOIN ATRIBUTOS a ON a.IDELEMENTO = e.ID
-                                    WHERE c.CODIGO = ? AND f.FORMATO = ?
-                                    AND a.DESCRIPCION = ?
-                                )
-                                """,
-                                (
-                                    valor or "",
-                                    id_concepto,
-                                    identidad,
-                                    codigo_concepto,
-                                    formato_concepto,
-                                    llave,
-                                ),
-                            )
-                        else:
-                            cur.execute(
-                                """
-                                UPDATE HOJA_TRABAJO ht
-                                SET ht.VALOR = ?
-                                WHERE ht.IDCONCEPTO = ? AND TRIM(ht.IDENTIDADTERCERO) = TRIM(?)
-                                AND ht.IDATRIBUTO = (
-                                    SELECT a.ID
-                                    FROM CONCEPTOS c
-                                    JOIN ELEMENTOS e ON e.IDCONCEPTO = c.ID
-                                    JOIN ATRIBUTOS a ON a.IDELEMENTO = e.ID
-                                    WHERE c.CODIGO = ?
-                                    AND a.DESCRIPCION = ?
-                                )
-                                """,
-                                (
-                                    valor or "",
-                                    id_concepto,
-                                    identidad,
-                                    codigo_concepto,
-                                    llave,
-                                ),
-                            )
+                        _actualizar_valor_entrada_por_descripcion(
+                            cur,
+                            valor=valor,
+                            id_concepto=id_concepto,
+                            identidad=identidad,
+                            codigo_concepto=str(codigo_concepto),
+                            formato_concepto=str(formato_concepto),
+                            descripcion=str(llave),
+                        )
             return True
         except Exception:
             return False

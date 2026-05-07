@@ -21,12 +21,12 @@ class FormatosPage(ft.Column):
         super().__init__()
         self._page = page
         self._app = app
-        c = app.container
-        self._formatos_uc = c.formatos_uc
+        container = app.container
+        self._formatos_uc = container.formatos_uc
         self.expand = True
         self.submenus = {}
         self.dialog = None
-        self.atributos_dialog = AtributosDialog(self._page, self, c)
+        self.atributos_dialog = AtributosDialog(self._page, self, container)
         self._listview = ft.ListView(expand=True, spacing=5, padding=10, controls=[])
         self.loader = crear_loader_row("Cargando formatos...", size=SIZE_SMALL)
         self.loader.visible = False
@@ -67,56 +67,82 @@ class FormatosPage(ft.Column):
         self.submenus[nombre] = submenu
         return ft.Column([ft.Row([btn]), submenu])
 
+    def _set_loader_overlay(self, visible: bool) -> None:
+        """Muestra/oculta loader overlay global cuando el app lo soporta."""
+        if hasattr(self._app, "_loader_overlay_mostrar"):
+            self._app._loader_overlay_mostrar(visible)
+
+    def _cargar_conceptos_formato(self, nombre: str):
+        """Obtiene conceptos asociados al formato seleccionado."""
+        return self._formatos_uc.obtener_conceptos(0, 1000, nombre)
+
+    def _poblar_submenu_conceptos(self, submenu: ft.Column, nombre: str, formato, conceptos: list) -> None:
+        """Reconstruye opciones de concepto en el submenú del formato."""
+        titulo = submenu.controls[0]
+        submenu.controls = [titulo]
+        for concepto in conceptos:
+            submenu.controls.append(
+                ft.TextButton(
+                    content=ft.Text(
+                        f"{concepto['codigo']} - {concepto['descripcion']}",
+                        no_wrap=False,
+                    ),
+                    style=BOTON_SUBLISTA,
+                    on_click=lambda e, concepto_actual=concepto: self.open_estructura(
+                        formato, concepto_actual
+                    ),
+                    margin=ft.margin.only(left=55, top=5),
+                )
+            )
+        self._toggle_submenu_visible(nombre, submenu)
+        submenu.update()
+        self._page.update()
+
+    def _toggle_submenu_visible(self, nombre: str, submenu: ft.Column) -> None:
+        """Alterna visibilidad del submenú objetivo y colapsa los demás."""
+        for nombre_menu, submenu_menu in self.submenus.items():
+            submenu_menu.visible = nombre_menu == nombre and not submenu.visible
+
+    def _mostrar_error_carga_conceptos(self, ex: Exception) -> None:
+        """Muestra error de carga de conceptos con overlay finalizado."""
+        self._set_loader_overlay(False)
+        mostrar_mensaje_overlay(self._page, f"Error al cargar conceptos: {ex}", 5000)
+
+    def _on_conceptos_formato_cargados(self, nombre: str, formato, submenu: ft.Column, conceptos: list) -> None:
+        """Actualiza UI al terminar carga de conceptos por formato."""
+        self._set_loader_overlay(False)
+        if not conceptos:
+            self.open_estructura(formato)
+            return
+        self._poblar_submenu_conceptos(submenu, nombre, formato, conceptos)
+
+    def _ejecutar_en_hilo(self, trabajo, on_success=None, on_error=None) -> None:
+        """Ejecuta trabajo en background y delega callbacks de éxito/error en UI thread."""
+        def _worker():
+            try:
+                resultado = trabajo()
+            except Exception as ex:
+                if on_error:
+                    ejecutar_en_ui(self._page, lambda ex=ex: on_error(ex))
+                return
+            if on_success:
+                ejecutar_en_ui(self._page, lambda resultado=resultado: on_success(resultado))
+        self._page.run_thread(_worker)
+
     def toggle_formato(self, nombre, formato):
         submenu = self.submenus[nombre]
         # Evita saltos de scroll: el loader visual para conceptos se muestra en overlay.
-        if hasattr(self._app, "_loader_overlay_mostrar"):
-            self._app._loader_overlay_mostrar(True)
-
-        def _worker():
-            try:
-                conceptos, _ = self._formatos_uc.obtener_conceptos(0, 1000, nombre)
-            except Exception as ex:
-                def _err():
-                    if hasattr(self._app, "_loader_overlay_mostrar"):
-                        self._app._loader_overlay_mostrar(False)
-                    mostrar_mensaje_overlay(self._page, f"Error al cargar conceptos: {ex}", 5000)
-
-                ejecutar_en_ui(self._page, _err)
-                return
-
-            def _ui():
-                if hasattr(self._app, "_loader_overlay_mostrar"):
-                    self._app._loader_overlay_mostrar(False)
-                if not conceptos:
-                    self.open_estructura(formato)
-                    return
-
-                titulo = submenu.controls[0]
-                submenu.controls = [titulo]
-
-                for c in conceptos:
-                    submenu.controls.append(
-                        ft.TextButton(
-                            content=ft.Text(
-                                f"{c['codigo']} - {c['descripcion']}",
-                                no_wrap=False,
-                            ),
-                            style=BOTON_SUBLISTA,
-                            on_click=lambda e, c=c: self.open_estructura(formato, c),
-                            margin=ft.margin.only(left=55, top=5),
-                        )
-                    )
-
-                for n, s in self.submenus.items():
-                    s.visible = (n == nombre and not s.visible)
-
-                submenu.update()
-                self._page.update()
-
-            ejecutar_en_ui(self._page, _ui)
-
-        self._page.run_thread(_worker)
+        self._set_loader_overlay(True)
+        self._ejecutar_en_hilo(
+            trabajo=lambda: self._cargar_conceptos_formato(nombre),
+            on_success=lambda resultado: self._on_conceptos_formato_cargados(
+                nombre,
+                formato,
+                submenu,
+                resultado[0] if resultado else [],
+            ),
+            on_error=self._mostrar_error_carga_conceptos,
+        )
 
     # ====================================================
     # VISTA PRINCIPAL
@@ -138,19 +164,22 @@ class FormatosPage(ft.Column):
     def actualizar_formatos(self):
         """Carga get_formatos en segundo plano y actualiza el ListView. Llamar desde on_enter."""
         loader_row_visibilidad(self._page, self.loader, True)
-        def _worker():
-            try:
-                formatos = self._formatos_uc.obtener_formatos()
-                self._listview.controls = [self.formato_menu(f) for f in formatos]
-                loader_row_fin(self._page, self.loader)
-            except Exception as e:
-                def _mostrar_error():
-                    loader_row_fin(self._page, self.loader)
-                    mostrar_mensaje_overlay(self._page, f"Error cargando formatos: {e}", 5555)
-                ejecutar_en_ui(self._page, _mostrar_error)
-                return
-            self._page.update()
-        self._page.run_thread(_worker)
+        self._ejecutar_en_hilo(
+            trabajo=self._formatos_uc.obtener_formatos,
+            on_success=self._on_formatos_cargados,
+            on_error=self._on_error_actualizar_formatos,
+        )
+
+    def _on_formatos_cargados(self, formatos: list) -> None:
+        """Pinta listado de formatos una vez completada la consulta."""
+        self._listview.controls = [self.formato_menu(formato) for formato in formatos]
+        loader_row_fin(self._page, self.loader)
+        self._page.update()
+
+    def _on_error_actualizar_formatos(self, e: Exception) -> None:
+        """Muestra error de consulta al cargar listado principal de formatos."""
+        loader_row_fin(self._page, self.loader)
+        mostrar_mensaje_overlay(self._page, f"Error cargando formatos: {e}", 5555)
 
     # ====================================================
     # DIÁLOGO ESTRUCTURA
@@ -184,25 +213,22 @@ class FormatosPage(ft.Column):
 
     def open_estructura(self, formato, concepto=None):
         loader_row_trabajo(self._page, self.loader, None, "Cargando estructura...")
+        self._ejecutar_en_hilo(
+            trabajo=lambda: self._cargar_datos_estructura(formato, concepto),
+            on_success=lambda datos: self._on_estructura_cargada(formato, concepto, datos),
+            on_error=self._on_error_open_estructura,
+        )
 
-        def _worker():
-            try:
-                estructura, formato_el = self._cargar_datos_estructura(formato, concepto)
-            except Exception as ex:
-                def _err():
-                    loader_row_fin(self._page, self.loader)
-                    mostrar_mensaje_overlay(self._page, f"Error al cargar la estructura: {ex}", 5000)
+    def _on_estructura_cargada(self, formato, concepto, datos: tuple) -> None:
+        """Finaliza carga de estructura y abre diálogo con los datos obtenidos."""
+        estructura, formato_el = datos
+        loader_row_fin(self._page, self.loader)
+        self._mostrar_dialog_estructura(formato, concepto, estructura, formato_el)
 
-                ejecutar_en_ui(self._page, _err)
-                return
-
-            def _ui():
-                loader_row_fin(self._page, self.loader)
-                self._mostrar_dialog_estructura(formato, concepto, estructura, formato_el)
-
-            ejecutar_en_ui(self._page, _ui)
-
-        self._page.run_thread(_worker)
+    def _on_error_open_estructura(self, ex: Exception) -> None:
+        """Muestra error al cargar estructura de formato/concepto."""
+        loader_row_fin(self._page, self.loader)
+        mostrar_mensaje_overlay(self._page, f"Error al cargar la estructura: {ex}", 5000)
 
     def _mostrar_dialog_estructura(self, formato, concepto, estructura, formato_el):
         submenus = {}
@@ -226,30 +252,30 @@ class FormatosPage(ft.Column):
 
             # tabla atributos
             rows = []
-            for a in atributos:
+            for atributo in atributos:
                 # Regla de negocio: CLASE=3 no tiene configuración por opciones.
-                clase_attr = a.get("Clase")
+                clase_attr = atributo.get("Clase")
                 try:
                     clase_attr = int(clase_attr) if clase_attr is not None and str(clase_attr).strip() != "" else None
                 except (TypeError, ValueError):
                     clase_attr = None
                 # En CLASE=2 también se permite configurar (DATOSESPECIFICOS).
-                if clase_attr != 3 and (clase_attr == 2 or a["Tipo"] < 1000):
+                if clase_attr != 3 and (clase_attr == 2 or atributo["Tipo"] < 1000):
                     rows.append(
                         ft.DataRow(
                             cells=[
-                                data_cell(ft.Text(a["Nombre"])),
+                                data_cell(ft.Text(atributo["Nombre"])),
                                 data_cell(
                                     ft.Row(
                                         [
-                                            ft.Text(a["Descripcion"]),
+                                            ft.Text(atributo["Descripcion"]),
                                             ft.IconButton(
                                                 icon=ft.Icons.EDIT_NOTE,
                                                 tooltip="Opciones",
                                                 style=BOTON_SECUNDARIO_SIN,
-                                                on_click=lambda e, attr=a:
+                                                on_click=lambda e, atributo_actual=atributo:
                                                     self.atributos_dialog.open_opciones_dialog(
-                                                        formato, attr, concepto, info["tglobal"]
+                                                        formato, atributo_actual, concepto, info["tglobal"]
                                                     ),
                                             ),
                                         ],
@@ -264,8 +290,8 @@ class FormatosPage(ft.Column):
                     rows.append(
                         ft.DataRow(
                             cells=[
-                                data_cell(ft.Text(a["Nombre"])),
-                                data_cell(ft.Text(a["Descripcion"])),
+                                data_cell(ft.Text(atributo["Nombre"])),
+                                data_cell(ft.Text(atributo["Descripcion"])),
                             ]
                         )
                     )
@@ -457,5 +483,7 @@ class FormatosPage(ft.Column):
     def _actualizar_estilos_seg(self, seg):
         """Actualiza estilos de los botones tipo acumulado (seg es seg_ref con .buttons)."""
         if hasattr(seg, "buttons"):
-            for b in seg.buttons:
-                b.style = BOTON_PRINCIPAL if b.data == seg.selected else BOTON_SECUNDARIO_SIN
+            for boton in seg.buttons:
+                boton.style = (
+                    BOTON_PRINCIPAL if boton.data == seg.selected else BOTON_SECUNDARIO_SIN
+                )

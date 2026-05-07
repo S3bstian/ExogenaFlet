@@ -18,22 +18,6 @@ from paginas.modulopasos.cartilla_terceros.herramientas_tercero import TerceroDi
 from utils.ui_sync import loader_row_fin, loader_row_trabajo, loader_row_visibilidad
 
 
-# def _label_sin_conjuncion_huerfana(label: str) -> str:
-#     """
-#     La etiqueta del TextField se envuelve al ancho del control; el salto puede separar
-#     conjunciones de una letra (o, y, e) de la palabra siguiente. NBSP evita ese corte.
-#     """
-#     if not label:
-#         return label
-#     # (^|\s) evita look-behind de ancho variable. NBSP fuera del template (re.sub no acepta \u ahí).
-#     _nbsp = "\u00a0"
-
-#     def _repl(m: re.Match) -> str:
-#         return m.group(1) + m.group(2) + _nbsp
-
-#     return re.sub(r"(^|\s)([oOyYeE])\s+(?=\S)", _repl, label)
-
-
 class TrabajoDialog:
     """
     Diálogo de hoja de trabajo. `abrir(modo=...)` recibe un string: "nuevo", "editar",
@@ -192,90 +176,135 @@ class TrabajoDialog:
         - `_guardar_nuevo()`  si modo = 'nuevo'
         - `_guardar_edicion()` si modo = 'editar'
         """
-        # Validar formulario antes de guardar
-        if not self._validar_formulario():
-            # Si falta tercero en nuevo, _validar_formulario ya dejó un mensaje explícito; no lo pisamos.
-            if not (self.modo == "nuevo" and not self.tercero_actual):
-                actualizar_mensaje_en_control(
-                    "Revise los campos marcados con error antes de guardar.", self.mensaje
-                )
-            self.page.update()
+        if not self._validacion_formulario_exitosa():
             return
-        
-        if self.modo == "editar":
-            self._guardar_edicion()
-        elif self.modo == "fideicomiso_masivo":
+        self._guardar_segun_modo()
+
+    def _validacion_formulario_exitosa(self) -> bool:
+        """Centraliza validación + feedback visual antes de ejecutar guardado."""
+        if self._validar_formulario():
+            return True
+        self._mostrar_error_validacion_guardado()
+        self.page.update()
+        return False
+
+    def _mostrar_error_validacion_guardado(self) -> None:
+        """
+        Mensaje estándar de error de validación.
+        En `nuevo` sin tercero, `_validar_formulario` ya deja un mensaje específico.
+        """
+        if self.modo == "nuevo" and not self.tercero_actual:
+            return
+        actualizar_mensaje_en_control(
+            "Revise los campos marcados con error antes de guardar.", self.mensaje
+        )
+
+    def _guardar_segun_modo(self) -> None:
+        """Despacha el guardado según el modo activo del diálogo."""
+        if self.modo == "fideicomiso_masivo":
             self._guardar_fideicomiso_masivo()
-        else:
-            self._guardar_nuevo()
+            return
+        accion = self._accion_guardado_payload_por_modo()
+        self._guardar_con_payload(accion)
+
+    def _accion_guardado_payload_por_modo(self):
+        """Retorna la acción de persistencia correspondiente al modo nuevo/editar."""
+        if self.modo == "editar":
+            return lambda payload: self._mutar_hoja().actualizar_entrada_hoja_trabajo(
+                self.id_concepto, self.identidad, payload
+            )
+        return lambda payload: self._mutar_hoja().crear_entrada_hoja_trabajo(payload)
     
     def _validar_formulario(self):
         """
         Valida todos los campos del formulario usando error_text.
         Retorna True si todos los campos son válidos, False en caso contrario.
         """
-        # Limpiar errores previos (Flet 0.80: TextField usa .error)
+        self._limpiar_errores_campos()
+
+        if self.modo == "fideicomiso_masivo":
+            return self._validar_formulario_fideicomiso()
+
+        if not self._validar_tercero_requerido_nuevo():
+            return False
+
+        errores = self._validar_campos_formulario_principal()
+        return not errores
+
+    def _limpiar_errores_campos(self) -> None:
+        """Limpia estado visual de error en todos los controles editables."""
         for campo in self.campos.values():
             set_campo_error(campo, None)
 
-        if self.modo == "fideicomiso_masivo":
-            tipo_ok = False
-            subtipo_ok = False
-            for attr, ctrl in self.campos.items():
-                key = str(attr or "").strip().upper()
-                valor = str(getattr(ctrl, "value", "") or "").strip()
-                if key == "TIPO DE FIDEICOMISO":
-                    tipo_ok = bool(valor)
-                    if not tipo_ok:
-                        set_campo_error(ctrl, "Seleccione el tipo de fideicomiso.")
-                elif key == "SUBTIPO DE FIDEICOMISO":
-                    subtipo_ok = bool(valor)
-                    if not subtipo_ok:
-                        set_campo_error(ctrl, "Seleccione el subtipo de fideicomiso.")
-            self.page.update()
-            return tipo_ok and subtipo_ok
-        
-        if self.modo == "nuevo" and not self.tercero_actual:
-            actualizar_mensaje_en_control(
-                "Seleccione un tercero antes de guardar.",
-                self.mensaje,
-            )
-            self.page.update()
-            return False
-        
+    def _validar_formulario_fideicomiso(self) -> bool:
+        """Valida selección de tipo/subtipo cuando el diálogo está en modo masivo."""
+        tipo_ok = False
+        subtipo_ok = False
+        for attr, ctrl in self.campos.items():
+            key = str(attr or "").strip().upper()
+            valor = str(getattr(ctrl, "value", "") or "").strip()
+            if key == "TIPO DE FIDEICOMISO":
+                tipo_ok = bool(valor)
+                if not tipo_ok:
+                    set_campo_error(ctrl, "Seleccione el tipo de fideicomiso.")
+            elif key == "SUBTIPO DE FIDEICOMISO":
+                subtipo_ok = bool(valor)
+                if not subtipo_ok:
+                    set_campo_error(ctrl, "Seleccione el subtipo de fideicomiso.")
+        self.page.update()
+        return tipo_ok and subtipo_ok
+
+    def _validar_tercero_requerido_nuevo(self) -> bool:
+        """En modo nuevo exige tercero seleccionado antes de persistir."""
+        if self.modo != "nuevo" or self.tercero_actual:
+            return True
+        actualizar_mensaje_en_control(
+            "Seleccione un tercero antes de guardar.",
+            self.mensaje,
+        )
+        return False
+
+    def _valor_control_normalizado(self, ctrl, attr: str) -> str:
+        """Lee `value` de un control y normaliza formato monetario cuando aplica."""
+        valor = ctrl.value if hasattr(ctrl, "value") else None
+        valor_str = str(valor).strip() if valor else ""
+        if valor_str and self._es_atributo_valor(attr):
+            return self._normalizar_valor_monetario(valor_str)
+        return valor_str
+
+    def _validar_campos_formulario_principal(self) -> bool:
+        """Valida campos del formulario estándar (nuevo/editar). Retorna `True` si hay errores."""
         errores = False
-        
-        # Validar campos obligatorios y tipos según atributos_info
+
         for attr, ctrl in self.campos.items():
             tipoacumulado = self.atributos_info.get(attr, 0)
-            
             # Los de tercero no están en el grid; vienen de la tarjeta / selección.
             if self._es_campo_de_tercero(tipoacumulado, attr):
                 continue
-            
-            valor = ctrl.value if hasattr(ctrl, "value") else None
-            valor_str = str(valor).strip() if valor else ""
-            if valor_str and self._es_atributo_valor(attr):
-                valor_str = self._normalizar_valor_monetario(valor_str)
-            
-            # Validar campo obligatorio "Número de Identificación"
+
+            valor_str = self._valor_control_normalizado(ctrl, attr)
+
             if self._es_atributo_identificacion(attr):
-                if not aplicar_validacion_error_text(ctrl, valor_str, validar_campo_obligatorio, nombre_campo="Número de Identificación"):
+                if not aplicar_validacion_error_text(
+                    ctrl,
+                    valor_str,
+                    validar_campo_obligatorio,
+                    nombre_campo="Número de Identificación",
+                ):
                     errores = True
                     continue
-            
-            # Validar números según el tipo de atributo
-            # Buscar si el atributo es numérico según su descripción
+
             if valor_str and self._es_atributo_numerico(attr):
-                if not aplicar_validacion_error_text(ctrl, valor_str, validar_numero, tipo="float", min_val=0):
+                if not aplicar_validacion_error_text(
+                    ctrl, valor_str, validar_numero, tipo="float", min_val=0
+                ):
                     errores = True
                     continue
             if valor_str and self._es_atributo_correo(attr):
                 if not aplicar_validacion_error_text(ctrl, valor_str, validar_email):
                     errores = True
-        
-        self.page.update()
-        return not errores
+
+        return errores
 
 
     def _post_guardar(self, resultado):
@@ -289,18 +318,22 @@ class TrabajoDialog:
 
     def _guardar_nuevo(self):
         """Guarda un nuevo grupo de filas de hoja de trabajo (modo 'nuevo')."""
-        datos_para_guardar = self._recopilar_datos_formulario()
-        self._asignar_concepto_y_formato(datos_para_guardar)
-        resultado = self._mutar_hoja().crear_entrada_hoja_trabajo(datos_para_guardar)
-        self._post_guardar(resultado)
+        self._guardar_con_payload(
+            lambda payload: self._mutar_hoja().crear_entrada_hoja_trabajo(payload)
+        )
 
     def _guardar_edicion(self):
         """Actualiza un registro existente de hoja de trabajo (modo 'editar')."""
-        datos_para_guardar = self._recopilar_datos_formulario()
-        self._asignar_concepto_y_formato(datos_para_guardar)
-        resultado = self._mutar_hoja().actualizar_entrada_hoja_trabajo(
-            self.id_concepto, self.identidad, datos_para_guardar
+        self._guardar_con_payload(
+            lambda payload: self._mutar_hoja().actualizar_entrada_hoja_trabajo(
+                self.id_concepto, self.identidad, payload
+            )
         )
+
+    def _guardar_con_payload(self, accion_guardado):
+        """Construye payload y ejecuta una acción de persistencia reutilizable."""
+        datos_para_guardar = self._construir_payload_guardado()
+        resultado = accion_guardado(datos_para_guardar)
         self._post_guardar(resultado)
 
     def _fideicomiso_ui_ocupado(self, ocupado: bool) -> None:
@@ -315,18 +348,19 @@ class TrabajoDialog:
 
     def _valores_formulario_fideicomiso(self) -> tuple[str, str, str, str]:
         """tipo, subtipo nuevos y filtros por valor actual (strings)."""
-        d = self._recopilar_datos_formulario()
-
-        def pick(desc: str) -> str:
-            for k, v in d.items():
-                if str(k or "").strip().upper() == desc:
-                    return str(v or "").strip()
-            return ""
-
-        tipo, subtipo = pick("TIPO DE FIDEICOMISO"), pick("SUBTIPO DE FIDEICOMISO")
+        datos_formulario = self._recopilar_datos_formulario()
+        tipo = self._valor_por_descripcion(datos_formulario, "TIPO DE FIDEICOMISO")
+        subtipo = self._valor_por_descripcion(datos_formulario, "SUBTIPO DE FIDEICOMISO")
         ft = str(self.filtro_tipo_actual.value or "").strip() if self.filtro_tipo_actual else ""
         fs = str(self.filtro_subtipo_actual.value or "").strip() if self.filtro_subtipo_actual else ""
         return tipo, subtipo, ft, fs
+
+    def _valor_por_descripcion(self, datos: dict, descripcion_mayuscula: str) -> str:
+        """Busca valor por descripción normalizada del atributo en un payload de formulario."""
+        for k, v in datos.items():
+            if str(k or "").strip().upper() == descripcion_mayuscula:
+                return str(v or "").strip()
+        return ""
 
     def _guardar_fideicomiso_masivo(self):
         """Aplica tipo/subtipo de fideicomiso (en hilo; usa loader reutilizable)."""
@@ -335,22 +369,44 @@ class TrabajoDialog:
         self.page.update()
 
         def _worker():
-            res = self._mutar_hoja().actualizar_fideicomiso_masivo(
-                self.concepto, tipo, subtipo,
-                filtro_tipo_actual=filtro_tipo, filtro_subtipo_actual=filtro_subtipo,
+            resultado = self._ejecutar_fideicomiso_masivo(
+                tipo=tipo,
+                subtipo=subtipo,
+                filtro_tipo=filtro_tipo,
+                filtro_subtipo=filtro_subtipo,
             )
-            self._fideicomiso_ui_ocupado(False)
-            ok = isinstance(res, str) and res.lower().startswith("tipo y subtipo")
-            if ok:
-                actualizar_mensaje_en_control(res, self.mensaje, ft.Colors.GREEN_300)
-                self.parent.cargar_datos()
-            else:
-                actualizar_mensaje_en_control(
-                    res if isinstance(res, str) else "Error aplicando fideicomiso masivo.", self.mensaje
-                )
-            self.page.update()
+            self._procesar_resultado_fideicomiso_masivo(resultado)
 
         self.page.run_thread(_worker)
+
+    def _ejecutar_fideicomiso_masivo(
+        self, *, tipo: str, subtipo: str, filtro_tipo: str, filtro_subtipo: str
+    ):
+        """Invoca el caso de uso de actualización masiva con los filtros seleccionados."""
+        return self._mutar_hoja().actualizar_fideicomiso_masivo(
+            self.concepto,
+            tipo,
+            subtipo,
+            filtro_tipo_actual=filtro_tipo,
+            filtro_subtipo_actual=filtro_subtipo,
+        )
+
+    def _fideicomiso_masivo_exitoso(self, resultado) -> bool:
+        """Determina éxito con la misma regla histórica basada en el texto de retorno."""
+        return isinstance(resultado, str) and resultado.lower().startswith("tipo y subtipo")
+
+    def _procesar_resultado_fideicomiso_masivo(self, resultado) -> None:
+        """Aplica feedback de UI, recarga y cierre de estado para el guardado masivo."""
+        self._fideicomiso_ui_ocupado(False)
+        if self._fideicomiso_masivo_exitoso(resultado):
+            actualizar_mensaje_en_control(resultado, self.mensaje, ft.Colors.GREEN_300)
+            self.parent.cargar_datos()
+        else:
+            actualizar_mensaje_en_control(
+                resultado if isinstance(resultado, str) else "Error aplicando fideicomiso masivo.",
+                self.mensaje,
+            )
+        self.page.update()
 
     # ==================== UTILIDADES ====================
     
@@ -478,6 +534,19 @@ class TrabajoDialog:
         """Indica si self.concepto viene como dict con codigo y formato."""
         return isinstance(self.concepto, dict) and "codigo" in self.concepto and "formato" in self.concepto
 
+    def _obtener_atributos_concepto(self):
+        """
+        Retorna atributos del concepto activo con compatibilidad para payload dict (codigo/formato)
+        y formato legacy.
+        """
+        if self._concepto_tiene_codigo_y_formato():
+            concepto_ref = {
+                "codigo": str(self.concepto["codigo"]),
+                "formato": str(self.concepto["formato"]),
+            }
+            return self._formatos_uc.obtener_atributos_por_concepto(concepto_ref)
+        return self._formatos_uc.obtener_atributos_por_concepto(self.concepto)
+
     def _asignar_concepto_y_formato(self, datos_destino: dict):
         """
         Asigna Concepto/FORMATO en el payload de trabajo.
@@ -488,6 +557,12 @@ class TrabajoDialog:
             datos_destino["FORMATO"] = self.concepto["formato"]
         else:
             datos_destino["Concepto"] = self.concepto
+
+    def _construir_payload_guardado(self) -> dict:
+        """Arma payload final de guardado con datos de formulario y metadatos de concepto/formato."""
+        payload = self._recopilar_datos_formulario()
+        self._asignar_concepto_y_formato(payload)
+        return payload
 
     def _control_usa_key_from_label(self, ctrl) -> bool:
         """True si el control requiere extraer código desde etiqueta 'key | name'."""
@@ -523,11 +598,7 @@ class TrabajoDialog:
         Descripciones de atributos con tipoacumulado < 9000, ordenadas por ID de atributo
         (misma regla que hoja_tools_front.construir_esquema / columnas de la grilla).
         """
-        if self._concepto_tiene_codigo_y_formato():
-            c = {"codigo": str(self.concepto["codigo"]), "formato": str(self.concepto["formato"])}
-            lista = self._formatos_uc.obtener_atributos_por_concepto(c)
-        else:
-            lista = self._formatos_uc.obtener_atributos_por_concepto(self.concepto)
+        lista = self._obtener_atributos_concepto()
         attrs = sorted(
             lista,
             key=lambda a: int(a[0]) if (isinstance(a[0], (int, float)) or str(a[0]).isdigit()) else 0,
@@ -552,11 +623,7 @@ class TrabajoDialog:
 
     def _cargar_atributos_info(self):
         """Carga y organiza la información de atributos del concepto."""
-        if self._concepto_tiene_codigo_y_formato():
-            c = {"codigo": str(self.concepto["codigo"]), "formato": str(self.concepto["formato"])}
-            lista_campos = self._formatos_uc.obtener_atributos_por_concepto(c)
-        else:
-            lista_campos = self._formatos_uc.obtener_atributos_por_concepto(self.concepto)
+        lista_campos = self._obtener_atributos_concepto()
         # Tupla: (ID, NOMBRE, DESCRIPCION, CLASE, TIPOACUMULADO); tipoacumulado < 9000; orden por ID como la grilla
         lista_campos_sincab = sorted(
             [campo for campo in lista_campos if len(campo) >= 5 and (campo[4] or 0) < 9000],
@@ -706,63 +773,26 @@ class TrabajoDialog:
                 return int(w)
         return self.ANCHO_CONTROL_DEFAULT
 
-    def _crear_control(self, attr, val, tipoacumulado, es_editable):
-        """Crea el control UI según el tipo de atributo."""
-        upper_attr = attr.upper()
-        
-        if self._es_clase_atributo(attr, 2):
-            return self._dropdown_datos_especificos(attr)
-        # País
-        if "PAÍS" in upper_attr or "PAÃ" in upper_attr or "PAIS" in upper_attr:
-            ctrl = self._crear_dropdown_base(
-                attr, PAISES.items(), str(val) if val else None,
-                on_change=self._on_pais_change, disabled=not es_editable
-            )
-            return ctrl
-        
-        # Tipo de documento: solo CLASE=3 (catálogo TIPOSDOC); otras clases quedan como texto.
-        es_tipo_doc_por_nombre = ("DOCUMENTO" in upper_attr and "TIPO" in upper_attr) or attr.strip().lower().startswith(
-            "tipo de documento"
+    def _dropdown_vacio_datos_especificos(
+        self,
+        attr: str,
+        es_editable: bool,
+        on_select,
+    ) -> DropdownCompact:
+        """Dropdown sin opciones iniciales (país/disparadores llenan después)."""
+        return DropdownCompact(
+            label=str(attr or "").strip(),
+            options=[],
+            value=None,
+            on_select=on_select,
+            width=self._ancho_control(attr),
+            expand=False,
+            disabled=not es_editable,
+            tooltip=attr,
         )
-        if es_tipo_doc_por_nombre and self._es_clase_atributo(attr, 3):
-            ctrl = self._crear_dropdown_base(
-                attr, TIPOSDOC.items(), str(val) if val else None,
-                disabled=not es_editable
-            )
-            return ctrl
-        
-        # Departamento
-        if "DEPARTAMENTO" in upper_attr:
-            dep_lbl = str(attr or "").strip()
-            ctrl = DropdownCompact(
-                label=dep_lbl,
-                options=[],
-                value=None,
-                on_select=self._on_departamento_change,
-                width=self._ancho_control(attr),
-                expand=False,
-                disabled=not es_editable,
-                tooltip=attr,
-            )
-            self.drop_dep = ctrl
-            return ctrl
-        
-        # Municipio
-        if "MUNICIPIO" in upper_attr:
-            mun_lbl = str(attr or "").strip()
-            ctrl = DropdownCompact(
-                label=mun_lbl,
-                options=[],
-                value=None,
-                width=self._ancho_control(attr),
-                expand=False,
-                disabled=not es_editable,
-                tooltip=attr,
-            )
-            self.drop_mun = ctrl
-            return ctrl
-        
-        # Campo de texto por defecto (montos/valores: teclado numérico; decimales permitidos en validación)
+
+    def _crear_control_texto_predeterminado(self, attr, val, es_editable):
+        """TextField/multiline por defecto: valores monetarios formateados y teclado numérico cuando aplica."""
         val_texto = str(val or "")
         multiline = len(val_texto) > 80 or self._es_attr_razon_social(attr)
         valor_inicial = (
@@ -775,7 +805,7 @@ class TrabajoDialog:
             if (self._es_atributo_numerico(attr) and not multiline)
             else None
         )
-        ctrl = self._crear_textfield(
+        return self._crear_textfield(
             attr,
             valor_inicial,
             multiline,
@@ -783,7 +813,78 @@ class TrabajoDialog:
             width=self._ancho_control(attr),
             keyboard_type=kbd,
         )
-        return ctrl
+
+    def _attr_en_mayusculas(self, attr: str) -> str:
+        """Retorna la etiqueta en mayúsculas para evaluaciones por nombre."""
+        return str(attr or "").strip().upper()
+
+    def _es_attr_pais(self, attr: str) -> bool:
+        """Detecta atributo país tolerando variantes de codificación."""
+        upper_attr = self._attr_en_mayusculas(attr)
+        return "PAÍS" in upper_attr or "PAÃ" in upper_attr or "PAIS" in upper_attr
+
+    def _es_attr_tipo_documento(self, attr: str) -> bool:
+        """Detecta atributo de tipo de documento por texto visible."""
+        upper_attr = self._attr_en_mayusculas(attr)
+        normalizado = str(attr or "").strip().lower()
+        return (
+            ("DOCUMENTO" in upper_attr and "TIPO" in upper_attr)
+            or normalizado.startswith("tipo de documento")
+        )
+
+    def _es_attr_departamento(self, attr: str) -> bool:
+        """Detecta atributo de departamento."""
+        return "DEPARTAMENTO" in self._attr_en_mayusculas(attr)
+
+    def _es_attr_municipio(self, attr: str) -> bool:
+        """Detecta atributo de municipio."""
+        return "MUNICIPIO" in self._attr_en_mayusculas(attr)
+
+    def _crear_control_pais(self, attr: str, val, es_editable: bool):
+        """Crea dropdown de países con callback de recarga de departamentos."""
+        return self._crear_dropdown_base(
+            attr,
+            PAISES.items(),
+            str(val) if val else None,
+            on_change=self._on_pais_change,
+            disabled=not es_editable,
+        )
+
+    def _crear_control_tipo_documento(self, attr: str, val, es_editable: bool):
+        """Crea dropdown de tipo de documento para clase 3."""
+        return self._crear_dropdown_base(
+            attr,
+            TIPOSDOC.items(),
+            str(val) if val else None,
+            disabled=not es_editable,
+        )
+
+    def _crear_control_departamento(self, attr: str, es_editable: bool):
+        """Crea dropdown de departamentos inicialmente vacío y lo registra en `self.drop_dep`."""
+        self.drop_dep = self._dropdown_vacio_datos_especificos(
+            attr, es_editable, self._on_departamento_change
+        )
+        return self.drop_dep
+
+    def _crear_control_municipio(self, attr: str, es_editable: bool):
+        """Crea dropdown de municipios inicialmente vacío y lo registra en `self.drop_mun`."""
+        self.drop_mun = self._dropdown_vacio_datos_especificos(attr, es_editable, None)
+        return self.drop_mun
+
+    def _crear_control(self, attr, val, tipoacumulado, es_editable):
+        """Crea el control UI según el tipo de atributo."""
+        if self._es_clase_atributo(attr, 2):
+            return self._dropdown_datos_especificos(attr)
+        if self._es_attr_pais(attr):
+            return self._crear_control_pais(attr, val, es_editable)
+        if self._es_attr_tipo_documento(attr) and self._es_clase_atributo(attr, 3):
+            return self._crear_control_tipo_documento(attr, val, es_editable)
+        if self._es_attr_departamento(attr):
+            return self._crear_control_departamento(attr, es_editable)
+        if self._es_attr_municipio(attr):
+            return self._crear_control_municipio(attr, es_editable)
+
+        return self._crear_control_texto_predeterminado(attr, val, es_editable)
 
     # ==================== MAPEO Y VALIDACIÓN ====================
     
@@ -806,29 +907,40 @@ class TrabajoDialog:
                     return descripcion
         return None
 
+    def _valor_tercero_normalizado(self, campo_tercero: str, valor_tercero) -> str:
+        """Normaliza valor de tercero según el tipo de campo mapeado."""
+        if campo_tercero == "tipodocumento":
+            codigo_tipo = obtener_codigo_tipodoc(valor_tercero)
+            return codigo_tipo if codigo_tipo else (str(valor_tercero) if valor_tercero else "")
+        return str(valor_tercero) if valor_tercero else ""
+
+    def _aplicar_campos_tercero_en_datos(self, tercero: dict) -> None:
+        """Mapea campos del tercero a atributos de formulario y actualiza `self.datos`."""
+        for descripcion, tipoacumulado in self.atributos_info.items():
+            if not self._es_campo_de_tercero(tipoacumulado, descripcion):
+                continue
+            for campo_tercero, valor_tercero in tercero.items():
+                if not self._mapear_tercero_a_atributo(campo_tercero, descripcion):
+                    continue
+                self.datos[descripcion] = self._valor_tercero_normalizado(campo_tercero, valor_tercero)
+                break
+
+    def _refrescar_o_construir_dialogo_formulario(self) -> None:
+        """Actualiza contenido del diálogo actual o construye uno nuevo cuando aún no existe."""
+        if self.dialog:
+            # Conservar lo ya escrito en el grid antes de reconstruir controles.
+            self.datos.update(self._valores_desde_controles_solo_grid())
+            self._refrescar_contenido_dialogo()
+            return
+        self._build_dialogo_formulario()
+
     # ==================== APLICACIÓN DE DATOS ====================
     
     def _aplicar_tercero_seleccionado(self, tercero):
         """Aplica los datos del tercero seleccionado a self.datos y refresca el contenido del diálogo."""
         self.tercero_actual = tercero
-        
-        for descripcion, tipoacumulado in self.atributos_info.items():
-            if self._es_campo_de_tercero(tipoacumulado, descripcion):
-                for campo_tercero, valor_tercero in tercero.items():
-                    if self._mapear_tercero_a_atributo(campo_tercero, descripcion):
-                        if campo_tercero == "tipodocumento":
-                            codigo_tipo = obtener_codigo_tipodoc(valor_tercero)
-                            self.datos[descripcion] = codigo_tipo if codigo_tipo else str(valor_tercero) if valor_tercero else ""
-                        else:
-                            self.datos[descripcion] = str(valor_tercero) if valor_tercero else ""
-                        break
-        
-        if self.dialog:
-            # Conservar lo ya escrito en el grid antes de reconstruir controles.
-            self.datos.update(self._valores_desde_controles_solo_grid())
-            self._refrescar_contenido_dialogo()
-        else:
-            self._build_dialogo_formulario()
+        self._aplicar_campos_tercero_en_datos(tercero)
+        self._refrescar_o_construir_dialogo_formulario()
 
     def _refrescar_contenido_dialogo(self):
         """Reconstruye solo el content del diálogo (sin recrear acciones/título)."""
@@ -846,24 +958,33 @@ class TrabajoDialog:
         Construye el diálogo principal de formulario.
         Se usa tanto en modo 'nuevo' como en modo 'editar'.
         """
+        self._preparar_estado_dialogo_formulario()
+        controles = self._construir_grid_campos()
+        contenido = self._construir_contenido_dialogo(controles)
+        self.dialog = self._crear_dialogo(contenido)
+        self._mostrar_dialogo_formulario()
+
+    def _preparar_estado_dialogo_formulario(self) -> None:
+        """Carga estado previo y metadatos necesarios antes de renderizar controles."""
         if self.modo == "editar":
             self.formato = self.datos.get("FORMATO", "")
-        
         self._cargar_atributos_info()
         self._asegurar_datos_completos()
         self._imprimir_atributos_en_consola()
-        controles = self._construir_grid_campos()
-        
-        contenido = self._construir_contenido_dialogo(controles)
-        self.dialog = self._crear_dialogo(contenido)
-        
+
+    def _mostrar_dialogo_formulario(self) -> None:
+        """Inicializa dependencias del diálogo y lo muestra en pantalla."""
         self._inicializar_dropdowns_dependientes()
         self.page.show_dialog(self.dialog)
         self.page.update()
     
     def _asegurar_datos_completos(self):
         """Garantiza que self.datos tenga todas las columnas del concepto."""
-        attrs = [c[2] for c in self._formatos_uc.obtener_atributos_por_concepto(self.concepto) if len(c) >= 5 and (c[4] or 0) < 9000]
+        attrs = [
+            c[2]
+            for c in self._obtener_atributos_concepto()
+            if len(c) >= 5 and (c[4] or 0) < 9000
+        ]
         if self.modo == "nuevo" and not self.tercero_actual:
             self.datos = {d: "" for d in attrs}
             self._asignar_concepto_y_formato(self.datos)
@@ -902,246 +1023,349 @@ class TrabajoDialog:
         2 cols (fideicomiso masivo): orden del concepto.
         3 cols (nuevo/editar): datos específicos (CLASE=2), manuales (CLASE=3), valores (CLASE=1).
         """
-        columnas = 3 if self.modo in ("nuevo", "editar") else 2
         margen_horizontal = 6
         padding_celda = 9
+        ancho_normal = self._ancho_normal_grid(controles)
 
+        if self.modo in ("nuevo", "editar"):
+            return self._filas_grid_tres_columnas(
+                controles=controles,
+                margen_horizontal=margen_horizontal,
+                padding_celda=padding_celda,
+                ancho_normal=ancho_normal,
+            )
+        return self._filas_grid_dos_columnas(
+            controles=controles,
+            margen_horizontal=margen_horizontal,
+            padding_celda=padding_celda,
+            ancho_normal=ancho_normal,
+        )
+
+    def _ancho_normal_grid(self, controles: list[tuple[str, ft.Control]]) -> int:
+        """Ancho base para celdas vacías y cálculo de filas completas."""
         ancho_normal = 233
-        for a, _ in controles:
-            if not self._es_attr_razon_social(a):
-                ancho_normal = self._ancho_control(a)
-                break
+        for attr, _ in controles:
+            if not self._es_attr_razon_social(attr):
+                return self._ancho_control(attr)
+        return ancho_normal
 
-        def wrap_cell(attr: str, ctrl: ft.Control) -> ft.Container:
-            return ft.Container(
-                width=self._ancho_control(attr),
-                padding=padding_celda,
-                expand=False,
-                content=ctrl,
-            )
+    def _wrap_cell_grid(self, attr: str, ctrl: ft.Control, padding_celda: int) -> ft.Container:
+        return ft.Container(
+            width=self._ancho_control(attr),
+            padding=padding_celda,
+            expand=False,
+            content=ctrl,
+        )
 
-        def empty_cell() -> ft.Container:
-            return ft.Container(
-                width=ancho_normal,
-                padding=padding_celda,
-                expand=False,
-            )
+    def _empty_cell_grid(self, ancho_normal: int, padding_celda: int) -> ft.Container:
+        return ft.Container(
+            width=ancho_normal,
+            padding=padding_celda,
+            expand=False,
+        )
 
-        def fila_razon_social(ancho_fila: int, ctrl: ft.Control) -> ft.Row:
-            return ft.Row(
-                [
-                    ft.Container(
-                        width=ancho_fila,
-                        padding=padding_celda,
-                        expand=False,
-                        content=ctrl,
-                    )
-                ],
-                spacing=0,
-            )
+    def _fila_grid_dos_celdas(
+        self,
+        celda_izq: ft.Container,
+        celda_der: ft.Container,
+        margen_horizontal: int,
+    ) -> ft.Row:
+        """Una fila del grid de dos columnas con el mismo spacing histórico."""
+        return ft.Row([celda_izq, celda_der], spacing=margen_horizontal)
 
-        # --- 2 columnas: emparejado secuencial (misma lógica que antes del refactor) ---
-        if columnas == 2:
-            filas: list[ft.Row] = []
-            pendiente: tuple[str, ft.Control] | None = None
-            for attr, ctrl in controles:
-                if self._es_attr_razon_social(attr):
-                    if pendiente is not None:
-                        a1, c1 = pendiente
-                        filas.append(
-                            ft.Row([wrap_cell(a1, c1), empty_cell()], spacing=margen_horizontal)
-                        )
-                        pendiente = None
-                    filas.append(fila_razon_social(self._ancho_control(attr), ctrl))
-                    continue
-                if pendiente is None:
-                    pendiente = (attr, ctrl)
-                else:
+    def _fila_razon_social_grid(
+        self, ancho_fila: int, ctrl: ft.Control, padding_celda: int
+    ) -> ft.Row:
+        return ft.Row(
+            [
+                ft.Container(
+                    width=ancho_fila,
+                    padding=padding_celda,
+                    expand=False,
+                    content=ctrl,
+                )
+            ],
+            spacing=0,
+        )
+
+    def _filas_grid_dos_columnas(
+        self,
+        *,
+        controles: list[tuple[str, ft.Control]],
+        margen_horizontal: int,
+        padding_celda: int,
+        ancho_normal: int,
+    ) -> list[ft.Row]:
+        """Emparejado secuencial de dos columnas (mismo comportamiento histórico)."""
+        filas: list[ft.Row] = []
+        pendiente: tuple[str, ft.Control] | None = None
+        for attr, ctrl in controles:
+            if self._es_attr_razon_social(attr):
+                if pendiente is not None:
                     a1, c1 = pendiente
                     filas.append(
-                        ft.Row([wrap_cell(a1, c1), wrap_cell(attr, ctrl)], spacing=margen_horizontal)
+                        self._fila_grid_dos_celdas(
+                            self._wrap_cell_grid(a1, c1, padding_celda),
+                            self._empty_cell_grid(ancho_normal, padding_celda),
+                            margen_horizontal,
+                        )
                     )
                     pendiente = None
-            if pendiente is not None:
+                filas.append(
+                    self._fila_razon_social_grid(
+                        self._ancho_control(attr), ctrl, padding_celda
+                    )
+                )
+                continue
+            if pendiente is None:
+                pendiente = (attr, ctrl)
+            else:
                 a1, c1 = pendiente
-                filas.append(ft.Row([wrap_cell(a1, c1), empty_cell()], spacing=margen_horizontal))
-            return filas
+                filas.append(
+                    self._fila_grid_dos_celdas(
+                        self._wrap_cell_grid(a1, c1, padding_celda),
+                        self._wrap_cell_grid(attr, ctrl, padding_celda),
+                        margen_horizontal,
+                    )
+                )
+                pendiente = None
+        if pendiente is not None:
+            a1, c1 = pendiente
+            filas.append(
+                self._fila_grid_dos_celdas(
+                    self._wrap_cell_grid(a1, c1, padding_celda),
+                    self._empty_cell_grid(ancho_normal, padding_celda),
+                    margen_horizontal,
+                )
+            )
+        return filas
 
-        # --- 3 columnas: orden por clasificación + bloques visuales ---
+    def _fila_titulo_bloque_grid(self, texto: str, ancho_fila_completa: int, padding_celda: int) -> ft.Row:
+        return ft.Row(
+            [
+                ft.Container(
+                    width=ancho_fila_completa,
+                    padding=ft.padding.only(left=padding_celda, right=padding_celda, top=8, bottom=4),
+                    content=ft.Column(
+                        [
+                            ft.Text(texto, size=12, weight=ft.FontWeight.W_600, color=GREY_700, margin=ft.margin.only(top=-12)),
+                            ft.Divider(height=0, thickness=1, color=ft.Colors.GREY_300),
+                        ],
+                        spacing=0,
+                    ),
+                )
+            ],
+            spacing=0,
+        )
+
+    def _flush_buffer_grid_tres_columnas(
+        self,
+        buffer_controles: list[tuple[str, ft.Control]],
+        *,
+        filas3: list[ft.Row],
+        margen_horizontal: int,
+        padding_celda: int,
+        ancho_fila_completa: int,
+        ancho_normal: int,
+    ) -> None:
+        """Vuelca el buffer al grid solo si tiene ítems (evita llamadas repetidas con los mismos kwargs)."""
+        if not buffer_controles:
+            return
+        self._volcar_buffer_tres_columnas(
+            filas3=filas3,
+            buffer_controles=buffer_controles,
+            margen_horizontal=margen_horizontal,
+            padding_celda=padding_celda,
+            ancho_fila_completa=ancho_fila_completa,
+            ancho_normal=ancho_normal,
+        )
+
+    def _volcar_buffer_tres_columnas(
+        self,
+        *,
+        filas3: list[ft.Row],
+        buffer_controles: list[tuple[str, ft.Control]],
+        margen_horizontal: int,
+        padding_celda: int,
+        ancho_fila_completa: int,
+        ancho_normal: int,
+    ) -> None:
+        for j in range(0, len(buffer_controles), 3):
+            chunk = buffer_controles[j : j + 3]
+            if len(chunk) < 3 and all(isinstance(c, DropdownCompact) for _, c in chunk):
+                cells_expand: list[ft.Container] = []
+                for _, ctrl in chunk:
+                    if ctrl.controls and isinstance(ctrl.controls[0], ft.Container):
+                        ctrl.controls[0].width = None
+                        ctrl.controls[0].expand = 1
+                    ctrl.expand = 1
+                    cells_expand.append(
+                        ft.Container(padding=padding_celda, expand=1, content=ctrl)
+                    )
+                filas3.append(
+                    ft.Row(
+                        cells_expand,
+                        spacing=margen_horizontal,
+                        width=ancho_fila_completa,
+                    )
+                )
+                continue
+            celdas = [self._wrap_cell_grid(a, c, padding_celda) for a, c in chunk]
+            while len(celdas) < 3:
+                celdas.append(self._empty_cell_grid(ancho_normal, padding_celda))
+            filas3.append(ft.Row(celdas[:3], spacing=margen_horizontal))
+
+    def _filas_grid_tres_columnas(
+        self,
+        *,
+        controles: list[tuple[str, ft.Control]],
+        margen_horizontal: int,
+        padding_celda: int,
+        ancho_normal: int,
+    ) -> list[ft.Row]:
+        """Construye grid por secciones para nuevo/editar (3 columnas)."""
         especificos = [(a, c) for a, c in controles if self._es_clase_atributo(a, 2)]
         manuales = [(a, c) for a, c in controles if self._es_clase_atributo(a, 3)]
         valores = [(a, c) for a, c in controles if self._es_clase_atributo(a, 1)]
         ancho_fila_completa = 3 * (ancho_normal + 2 * padding_celda) + 2 * margen_horizontal
         filas3: list[ft.Row] = []
 
-        def volcar_buffer(buf: list[tuple[str, ft.Control]], n: int):
-            for j in range(0, len(buf), n):
-                chunk = buf[j : j + n]
-                if n == 3 and len(chunk) < 3 and all(isinstance(c, DropdownCompact) for _, c in chunk):
-                    cells_expand: list[ft.Container] = []
-                    for _, ctrl in chunk:
-                        if ctrl.controls and isinstance(ctrl.controls[0], ft.Container):
-                            ctrl.controls[0].width = None
-                            ctrl.controls[0].expand = 1
-                        ctrl.expand = 1
-                        cells_expand.append(
-                            ft.Container(padding=padding_celda, expand=1, content=ctrl)
-                        )
-                    filas3.append(
-                        ft.Row(
-                            cells_expand,
-                            spacing=margen_horizontal,
-                            width=ancho_fila_completa,
-                        )
-                    )
-                    continue
-                cells = [wrap_cell(a, c) for a, c in chunk]
-                while len(cells) < n:
-                    cells.append(empty_cell())
-                filas3.append(ft.Row(cells[:n], spacing=margen_horizontal))
-
-        def fila_titulo_bloque(texto: str) -> ft.Row:
-            return ft.Row(
-                [
-                    ft.Container(
-                        width=ancho_fila_completa,
-                        padding=ft.padding.only(left=padding_celda, right=padding_celda, top=8, bottom=4),
-                        content=ft.Column(
-                            [
-                                ft.Text(texto, size=12, weight=ft.FontWeight.W_600, color=GREY_700, margin=ft.margin.only(top=-12)),
-                                ft.Divider(height=0, thickness=1, color=ft.Colors.GREY_300),
-                            ],
-                            spacing=0,
-                        ),
-                    )
-                ],
-                spacing=0,
-            )
-
         secciones = [
             ("Datos especificos (DIAN)", especificos),
             ("Atributos manuales", manuales),
             ("Atributos de valores", valores),
         ]
-
         for titulo, grupo in secciones:
             if not grupo:
                 continue
             if filas3:
                 filas3.append(ft.Row([ft.Container(height=1)], spacing=0))
-            filas3.append(fila_titulo_bloque(titulo))
-            buf: list[tuple[str, ft.Control]] = []
-            for a, c in grupo:
-                if self._es_attr_razon_social(a):
-                    if buf:
-                        volcar_buffer(buf, 3)
-                        buf = []
-                    filas3.append(fila_razon_social(ancho_fila_completa, c))
+            filas3.append(
+                self._fila_titulo_bloque_grid(titulo, ancho_fila_completa, padding_celda)
+            )
+
+            buffer_controles: list[tuple[str, ft.Control]] = []
+            def flush_buf() -> None:
+                self._flush_buffer_grid_tres_columnas(
+                    buffer_controles,
+                    filas3=filas3,
+                    margen_horizontal=margen_horizontal,
+                    padding_celda=padding_celda,
+                    ancho_fila_completa=ancho_fila_completa,
+                    ancho_normal=ancho_normal,
+                )
+
+            for attr, ctrl in grupo:
+                if self._es_attr_razon_social(attr):
+                    if buffer_controles:
+                        flush_buf()
+                        buffer_controles.clear()
+                    filas3.append(
+                        self._fila_razon_social_grid(
+                            ancho_fila_completa, ctrl, padding_celda
+                        )
+                    )
                 else:
-                    buf.append((a, c))
-                    if len(buf) == 3:
-                        volcar_buffer(buf, 3)
-                        buf = []
-            if buf:
-                volcar_buffer(buf, 3)
+                    buffer_controles.append((attr, ctrl))
+                    if len(buffer_controles) == 3:
+                        flush_buf()
+                        buffer_controles.clear()
+            flush_buf()
 
         return filas3
 
-    def _construir_contenido_dialogo(self, controles):
-        """Arma mensaje, piezas opcionales (fideicomiso, tercero) y grid según `self.modo`."""
-        filas = self._construir_filas_grid_formulario(controles)
-
-        grid = ft.Column(filas, spacing=0)
-        
-        contenido_columna = [self.mensaje]
-        if self.modo == "fideicomiso_masivo":
-            contenido_columna.append(self.loader_fideicomiso)
-            contenido_columna.append(self._construir_filtros_fideicomiso())
-        if self._debe_mostrar_selector_tercero() or self._debe_mostrar_boton_editar_tercero():
-            contenido_columna.append(self.loader_apertura_tercero)
-        
-        if self._debe_mostrar_selector_tercero():
-            self._btn_selector_tercero = ft.Button(
-                content="Seleccionar tercero",
-                icon=ft.Icons.PERSON_SEARCH,
-                style=BOTON_SECUNDARIO,
-                on_click=lambda e: self._abrir_dialogo_hijo_con_carga(
-                    self._btn_selector_tercero,
-                    self._abrir_dialogo_terceros,
-                    "Abriendo selector de terceros...",
-                ),
-            )
-            contenido_columna.append(
-                ft.Row([
-                    self._btn_selector_tercero
-                ], alignment=ft.MainAxisAlignment.CENTER)
-            )
-        
-        if self._debe_mostrar_tarjeta_tercero():
-            tarjeta = self._crear_tarjeta_tercero()
-            contenido_columna.append(tarjeta)
-            if self._debe_mostrar_boton_editar_tercero():
-                self._btn_editar_tercero = ft.ElevatedButton(
-                    "Editar tercero",
-                    icon=ft.Icons.EDIT,
-                    style=BOTON_SECUNDARIO,
-                    on_click=lambda e: self._abrir_dialogo_hijo_con_carga(
-                        self._btn_editar_tercero,
-                        self._abrir_dialogo_editar_tercero,
-                        "Abriendo editor de tercero...",
-                    ),
-                )
-                contenido_columna.append(
-                    ft.Row(
-                        [
-                            self._btn_editar_tercero
-                        ],
-                        alignment=ft.MainAxisAlignment.CENTER,
-                    )
-                )
-        if self.modo in ("nuevo", "editar") and not self._debe_mostrar_tarjeta_tercero():
-            tarjeta_contexto = self._crear_tarjeta_contexto_operativo()
-            if tarjeta_contexto:
-                contenido_columna.append(tarjeta_contexto)
-        
-        contenido_columna.append(
-            ft.Row(
-                [grid],
-                alignment=ft.MainAxisAlignment.CENTER,
-                expand=True,
-            )
-        )
-
+    def _shell_scroll_formulario(self, hijos_columna: list) -> ft.Container:
+        """Envuelve la columna principal del formulario en scroll sin duplicar nesting en el llamador."""
         content_column = ft.Container(
-            content=ft.Column(contenido_columna, expand=True), expand=True, padding=0
+            content=ft.Column(hijos_columna, expand=True), expand=True, padding=0
         )
-        
         return ft.Container(
             content=ft.Column([content_column], expand=True, scroll=ft.ScrollMode.AUTO),
             padding=0,
         )
 
+    def _construir_contenido_dialogo(self, controles):
+        """Arma mensaje, piezas opcionales (fideicomiso, tercero) y grid según `self.modo`."""
+        filas = self._construir_filas_grid_formulario(controles)
+        contenido_columna = self._bloques_superiores_dialogo()
+        contenido_columna.append(self._fila_grid_centrada(filas))
+        return self._shell_scroll_formulario(contenido_columna)
+
+    def _fila_grid_centrada(self, filas: list[ft.Row]) -> ft.Row:
+        """Centra el grid del formulario para mantener layout consistente entre modos."""
+        grid = ft.Column(filas, spacing=0)
+        return ft.Row([grid], alignment=ft.MainAxisAlignment.CENTER, expand=True)
+
+    def _boton_selector_tercero(self) -> ft.Row:
+        """Botón central para abrir selector de terceros en modo nuevo."""
+        self._btn_selector_tercero = ft.Button(
+            content="Seleccionar tercero",
+            icon=ft.Icons.PERSON_SEARCH,
+            style=BOTON_SECUNDARIO,
+            on_click=lambda e: self._abrir_dialogo_hijo_con_carga(
+                self._btn_selector_tercero,
+                self._abrir_dialogo_terceros,
+                "Abriendo selector de terceros...",
+            ),
+        )
+        return ft.Row(
+            [self._btn_selector_tercero], alignment=ft.MainAxisAlignment.CENTER
+        )
+
+    def _boton_editar_tercero(self) -> ft.Row:
+        """Botón central para abrir edición del tercero actual."""
+        self._btn_editar_tercero = ft.ElevatedButton(
+            "Editar tercero",
+            icon=ft.Icons.EDIT,
+            style=BOTON_SECUNDARIO,
+            on_click=lambda e: self._abrir_dialogo_hijo_con_carga(
+                self._btn_editar_tercero,
+                self._abrir_dialogo_editar_tercero,
+                "Abriendo editor de tercero...",
+            ),
+        )
+        return ft.Row(
+            [self._btn_editar_tercero], alignment=ft.MainAxisAlignment.CENTER
+        )
+
+    def _bloques_superiores_dialogo(self) -> list:
+        """Bloques superiores del diálogo antes del grid (mensajes, loaders, tarjetas y botones)."""
+        mostrar_selector = self._debe_mostrar_selector_tercero()
+        mostrar_boton_editar = self._debe_mostrar_boton_editar_tercero()
+        mostrar_tarjeta_tercero = self._debe_mostrar_tarjeta_tercero()
+        bloques = [self.mensaje]
+        if self.modo == "fideicomiso_masivo":
+            bloques.append(self.loader_fideicomiso)
+            bloques.append(self._construir_filtros_fideicomiso())
+
+        if mostrar_selector or mostrar_boton_editar:
+            bloques.append(self.loader_apertura_tercero)
+
+        if mostrar_selector:
+            bloques.append(self._boton_selector_tercero())
+
+        if mostrar_tarjeta_tercero:
+            bloques.append(self._crear_tarjeta_tercero())
+            if mostrar_boton_editar:
+                bloques.append(self._boton_editar_tercero())
+
+        if self.modo in ("nuevo", "editar") and not mostrar_tarjeta_tercero:
+            tarjeta_contexto = self._crear_tarjeta_contexto_operativo()
+            if tarjeta_contexto:
+                bloques.append(tarjeta_contexto)
+        return bloques
+
     def _construir_filtros_fideicomiso(self) -> ft.Container:
         """Dropdowns de filtro con valores ya existentes en hoja (sin duplicados)."""
         ex = self._mutar_hoja().obtener_valores_fideicomiso_existentes(self.concepto or {})
-
-        def uniq(vals: list) -> list:
-            return list(dict.fromkeys(str(v).strip() for v in vals if str(v).strip()))
-
-        def dd(label: str, valores: list) -> DropdownCompact:
-            opts = [ft.DropdownOption(key=v, text=v) for v in uniq(valores)]
-            lbl_vis = str(label or "").strip()
-            return DropdownCompact(
-                label=lbl_vis,
-                options=opts,
-                value=None,
-                width=236,
-                expand=False,
-                tooltip=label,
-            )
-
-        self.filtro_tipo_actual = dd("Filtrar por tipo actual (opcional)", ex.get("tipo", []))
-        self.filtro_subtipo_actual = dd("Filtrar por subtipo actual (opcional)", ex.get("subtipo", []))
+        self.filtro_tipo_actual = self._dropdown_filtro_fideicomiso(
+            "Filtrar por tipo actual (opcional)",
+            ex.get("tipo", []),
+        )
+        self.filtro_subtipo_actual = self._dropdown_filtro_fideicomiso(
+            "Filtrar por subtipo actual (opcional)",
+            ex.get("subtipo", []),
+        )
 
         return ft.Container(
             content=ft.Column(
@@ -1156,6 +1380,23 @@ class TrabajoDialog:
                 spacing=4,
             ),
             padding=ft.padding.only(left=9, right=9, top=4, bottom=8),
+        )
+
+    def _valores_unicos_no_vacios(self, valores: list) -> list[str]:
+        """Normaliza valores y elimina duplicados preservando orden."""
+        return list(dict.fromkeys(str(v).strip() for v in valores if str(v).strip()))
+
+    def _dropdown_filtro_fideicomiso(self, label: str, valores: list) -> DropdownCompact:
+        """Construye un dropdown de filtro compacto para fideicomiso masivo."""
+        opciones = [ft.DropdownOption(key=v, text=v) for v in self._valores_unicos_no_vacios(valores)]
+        etiqueta_visible = str(label or "").strip()
+        return DropdownCompact(
+            label=etiqueta_visible,
+            options=opciones,
+            value=None,
+            width=236,
+            expand=False,
+            tooltip=label,
         )
 
     def _padre_catalogo_dependiente(self, attr: str) -> str | None:
@@ -1173,32 +1414,46 @@ class TrabajoDialog:
             raw = self._datos_uc.obtener_tabla_padre_para_catalogo_dependiente(key)
         except Exception:
             raw = None
-        resolved: str | None = None
-        if raw:
-            rp = str(raw).strip()
-            if rp in self.datos:
-                resolved = rp
-            else:
-                rl = rp.lower()
-                for k in self.datos:
-                    if k.lower() == rl:
-                        resolved = k
-                        break
+        resolved = self._resolver_clave_datos_case_insensitive(raw)
         self._cache_padre_catalogo[key] = resolved
         return resolved
 
+    def _resolver_clave_datos_case_insensitive(self, raw_key: object) -> str | None:
+        """Resuelve una clave de `self.datos` tolerando variaciones de mayúsculas/minúsculas."""
+        if not raw_key:
+            return None
+        key_texto = str(raw_key).strip()
+        if not key_texto:
+            return None
+        if key_texto in self.datos:
+            return key_texto
+        key_lower = key_texto.lower()
+        for clave in self.datos:
+            if clave.lower() == key_lower:
+                return clave
+        return None
+
+    def _dropdown_options_desde_catalogo(self, opciones: list[dict]) -> list[ft.DropdownOption]:
+        """Mapea opciones crudas de datos específicos a `DropdownOption`."""
+        return [
+            ft.DropdownOption(
+                key=str(opcion["codigo"]),
+                text=(opcion["descripcion"] or str(opcion["codigo"])).strip(),
+            )
+            for opcion in opciones
+        ]
+
+    def _opciones_catalogo_por_attr(self, attr: str, parent_attr: str | None = None, parent_valor: str | None = None) -> list[dict]:
+        """Obtiene opciones de catálogo para un atributo, con o sin dependencia de padre."""
+        tabla = (attr or "").strip()
+        return self._opciones_dropdown_catalogo(tabla, parent_attr, parent_valor)
+
     def _dropdown_datos_especificos(self, attr: str) -> DropdownCompact:
         # TABLA en DATOSESPECIFICOS = ATRIBUTOS.DESCRIPCION (la etiqueta `attr`).
-        tb = (attr or "").strip()
-        p = self._padre_catalogo_dependiente(attr)
-        if p:
-            opciones = self._datos_uc.obtener_opciones_datos_especificos(tb, p, self.datos.get(p, "")) if tb else []
-        else:
-            opciones = self._datos_uc.obtener_opciones_datos_especificos(tb) if tb else []
-        opts = [
-            ft.DropdownOption(key=str(o["codigo"]), text=(o["descripcion"] or str(o["codigo"])).strip())
-            for o in opciones
-        ]
+        parent_attr = self._padre_catalogo_dependiente(attr)
+        parent_valor = self.datos.get(parent_attr, "") if parent_attr else None
+        opciones = self._opciones_catalogo_por_attr(attr, parent_attr, parent_valor)
+        opts = self._dropdown_options_desde_catalogo(opciones)
         v = str(self.datos.get(attr, "") or "").strip() or None
         de_lbl = str(attr or "").strip()
         return DropdownCompact(
@@ -1213,8 +1468,6 @@ class TrabajoDialog:
     def _enlazar_tipos_con_subtipos(self):
         """Tras armar el grid: el padre (catálogo clase 2) dispara refresco del dependiente."""
         for attr in self.campos:
-            if not self._padre_catalogo_dependiente(attr):
-                continue
             p = self._padre_catalogo_dependiente(attr)
             if not p:
                 continue
@@ -1233,19 +1486,26 @@ class TrabajoDialog:
 
             parent_ctrl._on_select = _make_handler(attr, prev)
 
+    def _opciones_dropdown_catalogo(
+        self, tabla: str, parent_attr: str | None = None, parent_valor: str | None = None
+    ) -> list:
+        """Obtiene opciones de catálogo simple o dependiente según exista padre."""
+        if not tabla:
+            return []
+        if parent_attr:
+            return self._datos_uc.obtener_opciones_datos_especificos(
+                tabla, parent_attr, parent_valor
+            )
+        return self._datos_uc.obtener_opciones_datos_especificos(tabla)
+
     def _actualizar_opciones_subtipo(self, attr: str, limpiar_seleccion_hijo: bool = True):
         p = self._padre_catalogo_dependiente(attr)
         parent_ctrl, child_ctrl = self.campos.get(p), self.campos.get(attr)
         if not p or not parent_ctrl or not child_ctrl:
             return
         pv = self._key_from_label(parent_ctrl.value) if parent_ctrl.value else None
-        tb = (attr or "").strip()
-        opciones = self._datos_uc.obtener_opciones_datos_especificos(tb, p, pv) if tb else []
-
-        child_ctrl.options = [
-            ft.DropdownOption(key=str(o["codigo"]), text=(o["descripcion"] or str(o["codigo"])).strip())
-            for o in opciones
-        ]
+        opciones = self._opciones_catalogo_por_attr(attr, p, pv)
+        child_ctrl.options = self._dropdown_options_desde_catalogo(opciones)
         if limpiar_seleccion_hijo:
             child_ctrl.value = None
         else:
@@ -1307,27 +1567,57 @@ class TrabajoDialog:
     
     def _inicializar_dropdowns_dependientes(self):
         """Inicializa los dropdowns que dependen de otros valores."""
-        for k in self.campos.keys():
-            upper_k = k.upper()
-            if ("PAÍS" in upper_k or "PAÃ" in upper_k or "PAIS" in upper_k) and self.campos[k].value:
+        for attr, ctrl in self.campos.items():
+            upper_k = attr.upper()
+            if ("PAÍS" in upper_k or "PAÃ" in upper_k or "PAIS" in upper_k) and ctrl.value:
                 try:
-                    self._llenar_departamentos_por_pais_label(self.campos[k].value)
+                    self._llenar_departamentos_por_pais_label(ctrl.value)
                 except Exception:
                     pass
                 break
-        for k in self.campos.keys():
-            if not self._padre_catalogo_dependiente(k):
-                continue
-            parent_attr = self._padre_catalogo_dependiente(k)
+        for attr in self.campos.keys():
+            parent_attr = self._padre_catalogo_dependiente(attr)
             if not parent_attr:
                 continue
             pc = self.campos.get(parent_attr)
             if pc and pc.value:
                 try:
-                    self._actualizar_opciones_subtipo(k, limpiar_seleccion_hijo=False)
+                    self._actualizar_opciones_subtipo(
+                        attr, limpiar_seleccion_hijo=False
+                    )
                 except Exception:
                     pass
     
+    def _texto_resumen(self, valor) -> str:
+        """Normaliza valores para tarjetas (tercero / resumen): vacío → "—", sin ocultar ceros."""
+        if valor is None:
+            return "—"
+        if isinstance(valor, str) and not valor.strip():
+            return "—"
+        return str(valor).strip()
+
+    def _fila_tarjeta_info(self, etiqueta: str, texto: str, ancho_etiqueta: int = 130) -> ft.Row:
+        """Fila label + valor para tarjetas de solo lectura; `ancho_etiqueta` alinea con el diseño de cada tarjeta."""
+        return ft.Row(
+            [
+                ft.Text(f"{etiqueta}:", weight=ft.FontWeight.BOLD, width=ancho_etiqueta),
+                ft.Text(texto, expand=True),
+            ],
+            spacing=5,
+        )
+
+    def _partir_filas_tarjeta_dos_columnas(self, filas: list[ft.Row]) -> ft.Row:
+        """Reparte filas info en dos columnas (primera mitad izquierda, resto derecha)."""
+        n = len(filas)
+        mitad = (n + 1) // 2
+        col_izq = ft.Column(filas[:mitad], spacing=6, tight=True, expand=True)
+        col_der = ft.Column(filas[mitad:], spacing=6, tight=True, expand=True)
+        return ft.Row(
+            [col_izq, col_der],
+            spacing=16,
+            vertical_alignment=ft.CrossAxisAlignment.START,
+        )
+
     def _crear_tarjeta_tercero(self):
         """
         Tarjeta con datos del tercero seleccionado o cargado.
@@ -1336,44 +1626,28 @@ class TrabajoDialog:
         t = self.tercero_actual or {}
         campos: list[ft.Row] = []
 
-        def texto_celda(valor) -> str:
-            """None o string en blanco → guión; el resto en string (incluye dígito 0)."""
-            if valor is None:
-                return "—"
-            if isinstance(valor, str) and not valor.strip():
-                return "—"
-            return str(valor).strip()
+        def fila(label: str, texto: str) -> None:
+            campos.append(self._fila_tarjeta_info(label, texto))
 
-        def fila(label: str, texto: str):
-            campos.append(
-                ft.Row(
-                    [
-                        ft.Text(f"{label}:", weight=ft.FontWeight.BOLD, width=130),
-                        ft.Text(texto, expand=True),
-                    ],
-                    spacing=5,
-                )
-            )
-
-        fila("Id", texto_celda(t.get("id")))
-        fila("Razón social", texto_celda(t.get("razonsocial")))
+        fila("Id", self._texto_resumen(t.get("id")))
+        fila("Razón social", self._texto_resumen(t.get("razonsocial")))
 
         tipodoc = t.get("tipodocumento")
         if tipodoc is not None and str(tipodoc).strip():
             td_txt = obtener_nombre_tipodoc(tipodoc) or str(tipodoc).strip()
         else:
-            td_txt = texto_celda(tipodoc)
+            td_txt = self._texto_resumen(tipodoc)
         fila("Tipo documento", td_txt)
 
-        fila("Identidad", texto_celda(t.get("identidad")))
-        fila("Dígito verificación", texto_celda(t.get("digitoverificacion")))
+        fila("Identidad", self._texto_resumen(t.get("identidad")))
+        fila("Dígito verificación", self._texto_resumen(t.get("digitoverificacion")))
 
-        fila("Primer nombre", texto_celda(t.get("primernombre")))
-        fila("Segundo nombre", texto_celda(t.get("segundonombre")))
-        fila("Primer apellido", texto_celda(t.get("primerapellido")))
-        fila("Segundo apellido", texto_celda(t.get("segundoapellido")))
+        fila("Primer nombre", self._texto_resumen(t.get("primernombre")))
+        fila("Segundo nombre", self._texto_resumen(t.get("segundonombre")))
+        fila("Primer apellido", self._texto_resumen(t.get("primerapellido")))
+        fila("Segundo apellido", self._texto_resumen(t.get("segundoapellido")))
 
-        fila("Dirección", texto_celda(t.get("direccion")))
+        fila("Dirección", self._texto_resumen(t.get("direccion")))
 
         pais_nom = obtener_nombre_pais(t.get("pais")) or "" if t.get("pais") else ""
         depto_nom = obtener_nombre_departamento(t.get("departamento")) or "" if t.get("departamento") else ""
@@ -1411,33 +1685,15 @@ class TrabajoDialog:
         for clave in sorted(t.keys()):
             if clave in _ya:
                 continue
-            fila(str(clave).replace("_", " "), texto_celda(t.get(clave)))
-
-        # Dos columnas: mitad de filas a la izquierda, resto a la derecha.
-        n = len(campos)
-        mitad = (n + 1) // 2
-        col_izq = ft.Column(campos[:mitad], spacing=6, tight=True, expand=True)
-        col_der = ft.Column(campos[mitad:], spacing=6, tight=True, expand=True)
+            fila(str(clave).replace("_", " "), self._texto_resumen(t.get(clave)))
 
         return ft.Container(
-            content=ft.Row(
-                [col_izq, col_der],
-                spacing=16,
-                vertical_alignment=ft.CrossAxisAlignment.START,
-            ),
+            content=self._partir_filas_tarjeta_dos_columnas(campos),
             padding=12,
             bgcolor=ft.Colors.GREY_100,
             border_radius=8,
             border=ft.border.all(1, PINK_200),
         )
-
-    def _texto_resumen(self, valor) -> str:
-        """Normaliza valores para tarjetas de resumen sin ocultar ceros."""
-        if valor is None:
-            return "—"
-        if isinstance(valor, str) and not valor.strip():
-            return "—"
-        return str(valor).strip()
 
     def _campos_resumen_clase_cero(self) -> list[tuple[str, str]]:
         """
@@ -1445,15 +1701,11 @@ class TrabajoDialog:
         atributos CLASE=0 del concepto. Solo incluye campos con valor real.
         """
         excluir_fijos = {"Concepto", "FORMATO", "id_concepto"}
-        out: list[tuple[str, str]] = []
+        resumen_campos: list[tuple[str, str]] = []
         def _norm(s: object) -> str:
             return str(s or "").strip().upper()
 
-        if self._concepto_tiene_codigo_y_formato():
-            c = {"codigo": str(self.concepto["codigo"]), "formato": str(self.concepto["formato"])}
-            lista_campos = self._formatos_uc.obtener_atributos_por_concepto(c)
-        else:
-            lista_campos = self._formatos_uc.obtener_atributos_por_concepto(self.concepto)
+        lista_campos = self._obtener_atributos_concepto()
 
         # Catálogo de atributos permitidos en tarjeta (solo CLASE=0).
         clase_cero_por_norm: dict[str, str] = {}
@@ -1499,14 +1751,14 @@ class TrabajoDialog:
                 continue
 
             etiqueta = clase_cero_por_norm.get(clave_norm, clave_txt)
-            out.append((etiqueta, valor_txt))
+            resumen_campos.append((etiqueta, valor_txt))
 
         # Deduplicar por etiqueta final y ordenar por el orden natural del concepto.
-        dedup: dict[str, str] = {}
-        for k, v in out:
-            dedup[k] = v
+        deduplicados_por_etiqueta: dict[str, str] = {}
+        for etiqueta, valor in resumen_campos:
+            deduplicados_por_etiqueta[etiqueta] = valor
         return sorted(
-            dedup.items(),
+            deduplicados_por_etiqueta.items(),
             key=lambda kv: (orden_norm.get(_norm(kv[0]), 10_000), _norm(kv[0])),
         )
 
@@ -1515,31 +1767,15 @@ class TrabajoDialog:
         if not campos:
             return None
 
-        filas: list[ft.Row] = []
-        for label, texto in campos:
-            filas.append(
-                ft.Row(
-                    [
-                        ft.Text(f"{label}:", weight=ft.FontWeight.BOLD, width=170),
-                        ft.Text(texto, expand=True),
-                    ],
-                    spacing=5,
-                )
-            )
-
-        mitad = (len(filas) + 1) // 2
-        col_izq = ft.Column(filas[:mitad], spacing=6, tight=True, expand=True)
-        col_der = ft.Column(filas[mitad:], spacing=6, tight=True, expand=True)
+        filas: list[ft.Row] = [
+            self._fila_tarjeta_info(label, texto, ancho_etiqueta=170) for label, texto in campos
+        ]
 
         return ft.Container(
             content=ft.Column(
                 [
                     ft.Text(titulo, weight=ft.FontWeight.W_600, color=GREY_700),
-                    ft.Row(
-                        [col_izq, col_der],
-                        spacing=16,
-                        vertical_alignment=ft.CrossAxisAlignment.START,
-                    ),
+                    self._partir_filas_tarjeta_dos_columnas(filas),
                 ],
                 spacing=8,
             ),
@@ -1559,15 +1795,24 @@ class TrabajoDialog:
 
     # ==================== DIÁLOGO DE ELIMINACIÓN ====================
     
+    def _atributos_valor_opciones_filtro_eliminar(self) -> list[tuple]:
+        """Pares (id_atributo, descripción) de atributos CLASE valor (tipo 1) para filtro opcional."""
+        campos = self._obtener_atributos_concepto()
+        return [(a[0], a[1]) for a in campos if a[2] == 1]
+
+    def _on_opcion_eliminar_change(self, e):
+        """Muestra u oculta identidad según radio de alcance."""
+        self.input_identidad.visible = self.opcion.value == "identidad"
+        self.page.update()
+
     def _abrir_dialogo_eliminar(self):
         """
         Abre el diálogo para eliminar registros.
         Solo se usa cuando `abrir()` se invoca con modo='eliminar'.
         """
         self._btn_confirmar_dialogo = None
-        campos = self._formatos_uc.obtener_atributos_por_concepto(self.concepto)
-        opt = [(a[0], a[1]) for a in campos if a[2] == 1]
-        
+        opt = self._atributos_valor_opciones_filtro_eliminar()
+
         self.opcion = ft.RadioGroup(
             value="identidad",
             content=ft.Column([
@@ -1575,7 +1820,7 @@ class TrabajoDialog:
                 ft.Radio(value="concepto", label="Eliminar todo el Concepto", active_color=PINK_200)
             ])
         )
-        
+
         self.input_identidad = ft.TextField(
             label="Identidad",
             visible=True,
@@ -1583,13 +1828,13 @@ class TrabajoDialog:
             label_style=ft.TextStyle(color=GREY_700),
             max_length=20,
         )
-        
+
         self.select_campo = DropdownCompact(
             label="Campo a evaluar",
             options=[ft.DropdownOption(key=f"{id_} | {desc}", text=f"{id_} | {desc}") for id_, desc in opt],
             expand=True,
         )
-        
+
         self.input_filtro = ft.TextField(
             label="Si el valor es menor a",
             hint_text="Filtro opcional",
@@ -1598,12 +1843,8 @@ class TrabajoDialog:
             label_style=ft.TextStyle(color=GREY_700),
             max_length=20,
         )
-        
-        def on_opcion_change(e):
-            self.input_identidad.visible = self.opcion.value == "identidad"
-            self.page.update()
-        
-        self.opcion.on_change = on_opcion_change
+
+        self.opcion.on_change = self._on_opcion_eliminar_change
         self.loader_eliminar = crear_loader_row("Eliminando registros...", size=SIZE_SMALL)
         self.loader_eliminar.visible = False
         content = ft.Column([
@@ -1664,52 +1905,53 @@ class TrabajoDialog:
         """Llena el dropdown de departamentos basado en el país seleccionado."""
         if not self.drop_dep:
             return
-        
+
         pais_key = self._key_from_label(pais_label)
-        deps_iter = [(k, v[0]) for k, v in DEPARTAMENTOS.items() if str(v[1]) == str(pais_key)]
-        
-        opts = []
-        selected_value = None
-        desc_depto = self._obtener_descripcion_atributo("departamento")
-        valor_actual = self.datos.get(desc_depto) if desc_depto else None
-        
-        for k, name in deps_iter:
-            label_txt = self._label(k, name)
-            opts.append(ft.DropdownOption(key=label_txt, text=label_txt))
-            if valor_actual and str(valor_actual) == str(k):
-                selected_value = label_txt
-                if selected_value:
-                    self._llenar_municipios_por_departamento_label(label_txt)
-        
-        self.drop_dep.options = opts
+        deps_iter = [
+            (codigo_departamento, datos_departamento[0])
+            for codigo_departamento, datos_departamento in DEPARTAMENTOS.items()
+            if str(datos_departamento[1]) == str(pais_key)
+        ]
+        valor_actual_depto = self._valor_actual_attr_tercero("departamento")
+        opciones, selected_value = self._opciones_y_seleccion_desde_items(deps_iter, valor_actual_depto)
+        self.drop_dep.options = opciones
         self.drop_dep.value = selected_value
+        if selected_value:
+            self._llenar_municipios_por_departamento_label(selected_value)
     
     def _llenar_municipios_por_departamento_label(self, dept_label):
         """Llena el dropdown de municipios basado en el departamento seleccionado."""
         if not self.drop_mun:
             return
-        
+
         dept_key = self._key_from_label(dept_label)
         dept_key_int = int(dept_key) if str(dept_key).isdigit() else None
-        
         muns_iter = [
-            (v[0], v[1]) for _, v in MUNICIPIOS.items()
-            if (dept_key_int and int(v[2]) == dept_key_int) or str(v[2]) == str(dept_key)
+            (datos_municipio[0], datos_municipio[1])
+            for _, datos_municipio in MUNICIPIOS.items()
+            if (dept_key_int and int(datos_municipio[2]) == dept_key_int)
+            or str(datos_municipio[2]) == str(dept_key)
         ]
-        
-        opts = []
-        selected_value = None
-        desc_muni = self._obtener_descripcion_atributo("municipio")
-        valor_actual = self.datos.get(desc_muni) if desc_muni else None
-        
-        for codigo, name in muns_iter:
-            label_txt = self._label(codigo, name)
-            opts.append(ft.DropdownOption(key=label_txt, text=label_txt))
+        valor_actual_muni = self._valor_actual_attr_tercero("municipio")
+        opciones, selected_value = self._opciones_y_seleccion_desde_items(muns_iter, valor_actual_muni)
+        self.drop_mun.options = opciones
+        self.drop_mun.value = selected_value
+
+    def _valor_actual_attr_tercero(self, campo: str):
+        """Obtiene valor actual de `self.datos` según el mapeo del campo lógico de tercero."""
+        descripcion = self._obtener_descripcion_atributo(campo)
+        return self.datos.get(descripcion) if descripcion else None
+
+    def _opciones_y_seleccion_desde_items(self, items: list[tuple], valor_actual) -> tuple[list[ft.DropdownOption], str | None]:
+        """Construye opciones label+texto y resuelve selección inicial por código actual."""
+        opciones: list[ft.DropdownOption] = []
+        selected_value: str | None = None
+        for codigo, nombre in items:
+            label_txt = self._label(codigo, nombre)
+            opciones.append(ft.DropdownOption(key=label_txt, text=label_txt))
             if valor_actual and str(valor_actual) == str(codigo):
                 selected_value = label_txt
-        
-        self.drop_mun.options = opts
-        self.drop_mun.value = selected_value
+        return opciones, selected_value
     
     def _on_pais_change(self, e):
         """Maneja el cambio de país."""
@@ -1754,10 +1996,7 @@ class TrabajoDialog:
         Abre el catálogo de terceros para seleccionar uno.
         Solo se muestra y usa en modo 'nuevo'.
         """
-        self.dialog_trabajo_guardado = self.dialog
-        if self.dialog:
-            self.page.pop_dialog()
-            self.page.update()
+        self._cerrar_dialogo_actual_para_hijo()
         self.tercero_dialog.open_agregar_dialog()
     
     def _abrir_dialogo_editar_tercero(self):
@@ -1766,11 +2005,27 @@ class TrabajoDialog:
         Solo está disponible en modo 'editar' cuando hay un tercero cargado.
         """
         tercero = self.tercero_actual.copy()
-        self.dialog_trabajo_guardado = self.dialog
-        if self.dialog:
-            self.page.pop_dialog()
-            self.page.update()
+        self._cerrar_dialogo_actual_para_hijo()
         self.tercero_dialog_editar.abrir(tercero=tercero, origen="editar")
+
+    def _cerrar_dialogo_actual_para_hijo(self) -> None:
+        """Guarda referencia y cierra el diálogo actual antes de abrir uno hijo."""
+        self.dialog_trabajo_guardado = self.dialog
+        if not self.dialog:
+            return
+        self.page.pop_dialog()
+        self.page.update()
+
+    def _valor_desde_control_grid(self, attr: str, ctrl) -> object:
+        """Interpreta `value` del control del grid según etiqueta/key o atributo monetario."""
+        val = getattr(ctrl, "value", None)
+        if not val:
+            return ""
+        if self._control_usa_key_from_label(ctrl):
+            return self._key_from_label(val)
+        if self._es_atributo_valor(attr):
+            return self._normalizar_valor_monetario(val)
+        return val
 
     def _valores_desde_controles_solo_grid(self) -> dict:
         """Lee solo atributos que tienen control en el grid (excluye tercero)."""
@@ -1779,25 +2034,17 @@ class TrabajoDialog:
             tipoacumulado = self.atributos_info.get(attr, 0)
             if self._es_campo_de_tercero(tipoacumulado, attr):
                 continue
-            val = getattr(ctrl, "value", None)
-            if not val:
-                datos[attr] = ""
-                continue
-            if self._control_usa_key_from_label(ctrl):
-                datos[attr] = self._key_from_label(val)
-            else:
-                datos[attr] = (
-                    self._normalizar_valor_monetario(val)
-                    if self._es_atributo_valor(attr)
-                    else val
-                )
-                
+            datos[attr] = self._valor_desde_control_grid(attr, ctrl)
         return datos
+
+    def _fusionar_campos_tercero_desde_datos(self, datos: dict) -> None:
+        """Añade a `datos` los valores de tercero que viven en `self.datos` (no están en el grid)."""
+        for attr, tipoacumulado in self.atributos_info.items():
+            if self._es_campo_de_tercero(tipoacumulado, attr):
+                datos[attr] = str(self.datos.get(attr, "") or "")
 
     def _recopilar_datos_formulario(self):
         """Recopila grid + valores de tercero almacenados en self.datos (tarjeta / selección)."""
         datos = self._valores_desde_controles_solo_grid()
-        for attr, tipoacumulado in self.atributos_info.items():
-            if self._es_campo_de_tercero(tipoacumulado, attr):
-                datos[attr] = str(self.datos.get(attr, "") or "")
+        self._fusionar_campos_tercero_desde_datos(datos)
         return datos

@@ -170,9 +170,7 @@ class GenerarXmlPage(ft.Column):
             try:
                 self.formatos = self._generar_xml_uc.obtener_formatos()
                 loader_row_fin(self._page, self.loader)
-                if not self.dialog_shown:
-                    self.dialog_shown = True
-                    self._open_dialog_formatos()
+                self._abrir_dialogo_formato_si_aplica()
                 self._refresh_body()
             except Exception as ex:
                 loader_row_fin(self._page, self.loader)
@@ -180,15 +178,22 @@ class GenerarXmlPage(ft.Column):
             self._page.update()
         self._page.run_thread(_worker)
 
+    def _abrir_dialogo_formato_si_aplica(self) -> None:
+        """Evita mostrar múltiples veces el diálogo inicial de selección."""
+        if self.dialog_shown:
+            return
+        self.dialog_shown = True
+        self._open_dialog_formatos()
+
     # ---------- Diálogo de selección de formato ----------
     def _open_dialog_formatos(self):
         lista_botones = [
             ft.TextButton(
-                content=f"{f[1]} - {f[2]}",
+                content=f"{formato[1]} - {formato[2]}",
                 style=BOTON_LISTA,
-                on_click=lambda e, formato=f: self._seleccionar_formato(formato),
+                on_click=lambda e, formato=formato: self._seleccionar_formato(formato),
             )
-            for f in self.formatos
+            for formato in self.formatos
         ]
 
         self.dialog = ft.AlertDialog(
@@ -217,28 +222,40 @@ class GenerarXmlPage(ft.Column):
     def _seleccionar_formato(self, formato):
         self._page.pop_dialog()
         loader_row_trabajo(self._page, self.loader, None, "Cargando formato...")
-        formato_codigo = formato[1]
 
         def _worker():
             try:
-                self.selected_formato = formato
-                self.selected_formato_nombre = formato_codigo
-                self._cache_xsd = {
-                    "atributos": self._generar_xml_uc.parsear_xsd(formato_codigo),
-                    "orden": self._generar_xml_uc.obtener_orden_atributos_xsd(formato_codigo),
-                    "elemento_detalle": self._generar_xml_uc.obtener_elemento_detalle_xsd(formato_codigo),
-                }
-                self._resultado_validacion = None
-                self._cache_datos_hoja = None
-                self.label_formato.value = f"Formato seleccionado: {self.selected_formato_nombre}"
-                self.step = 1
-                self.campos_modificar = {}
-                self._build_modificar_form()
-                self._refresh_body()
+                self._aplicar_formato_seleccionado(formato)
             finally:
                 loader_row_fin(self._page, self.loader)
 
         self._page.run_thread(_worker)
+
+    def _aplicar_formato_seleccionado(self, formato) -> None:
+        """Carga metadatos XSD y reinicia el estado de validación para el formato elegido."""
+        formato_codigo = formato[1]
+        self.selected_formato = formato
+        self.selected_formato_nombre = formato_codigo
+        self._cache_xsd = self._cargar_cache_xsd(formato_codigo)
+        self._reiniciar_estado_validacion_formato()
+        self.label_formato.value = f"Formato seleccionado: {self.selected_formato_nombre}"
+        self.step = 1
+        self.campos_modificar = {}
+        self._build_modificar_form()
+        self._refresh_body()
+
+    def _cargar_cache_xsd(self, formato_codigo: str) -> dict:
+        """Obtiene estructura XSD necesaria para validar y construir XML."""
+        return {
+            "atributos": self._generar_xml_uc.parsear_xsd(formato_codigo),
+            "orden": self._generar_xml_uc.obtener_orden_atributos_xsd(formato_codigo),
+            "elemento_detalle": self._generar_xml_uc.obtener_elemento_detalle_xsd(formato_codigo),
+        }
+
+    def _reiniciar_estado_validacion_formato(self) -> None:
+        """Resetea caches del flujo cuando cambia el formato seleccionado."""
+        self._resultado_validacion = None
+        self._cache_datos_hoja = None
 
     # ---------- Construcción de pasos ----------
     def _refresh_body(self):
@@ -247,44 +264,75 @@ class GenerarXmlPage(ft.Column):
             self.selected_formato and self.step == 1 and resultado_validacion is not None
         )
 
-        chips = [
-            self._chip_paso(1, "Validar"),
-            self._chip_paso(2, "Generar"),
-        ]
-        
-        boton_izq = None
-        boton_der = None
-        
-        if self.selected_formato:
-            if self.step == 1:
-                boton_izq = ft.TextButton(content="Reelegir formato", style=BOTON_SECUNDARIO_SIN, on_click=lambda e: self._open_dialog_formatos())
-                boton_der = ft.Button(content="Continuar con Generar", icon=ft.Icons.ARROW_FORWARD, style=BOTON_PRINCIPAL, on_click=lambda e: self._ir_a_generar())
-            elif self.step == 2:
-                boton_izq = ft.TextButton("Volver a Validar", style=BOTON_SECUNDARIO_SIN, on_click=lambda e: self._ir_a_validar())
-                boton_der = ft.ElevatedButton("Reelegir formato", style=BOTON_PRINCIPAL, icon=ft.Icons.LIST, on_click=lambda e: self._open_dialog_formatos())
-        
-        self.stepper_row.controls = []
-        if boton_izq:
-            self.stepper_row.controls.append(boton_izq)
-        self.stepper_row.controls.extend(chips)
-        if boton_der:
-            self.stepper_row.controls.append(boton_der)
+        boton_izq, boton_der = self._obtener_botones_navegacion_step()
+        self.stepper_row.controls = self._construir_controles_stepper(boton_izq, boton_der)
         self.stepper_row.alignment = "spaceBetween"
+        self.step_content_container.content = self._construir_contenido_step_actual()
 
-        # Selecciona el contenido según el paso
+    def _obtener_botones_navegacion_step(self):
+        """Define botones laterales del stepper según paso y formato seleccionado."""
         if not self.selected_formato:
-            self.step_content_container.content = ft.Column(
+            return None, None
+
+        if self.step == 1:
+            return (
+                ft.TextButton(
+                    content="Reelegir formato",
+                    style=BOTON_SECUNDARIO_SIN,
+                    on_click=lambda _e: self._open_dialog_formatos(),
+                ),
+                ft.Button(
+                    content="Continuar con Generar",
+                    icon=ft.Icons.ARROW_FORWARD,
+                    style=BOTON_PRINCIPAL,
+                    on_click=lambda _e: self._ir_a_generar(),
+                ),
+            )
+
+        if self.step == 2:
+            return (
+                ft.TextButton(
+                    "Volver a Validar",
+                    style=BOTON_SECUNDARIO_SIN,
+                    on_click=lambda _e: self._ir_a_validar(),
+                ),
+                ft.ElevatedButton(
+                    "Reelegir formato",
+                    style=BOTON_PRINCIPAL,
+                    icon=ft.Icons.LIST,
+                    on_click=lambda _e: self._open_dialog_formatos(),
+                ),
+            )
+
+        return None, None
+
+    def _construir_controles_stepper(self, boton_izq, boton_der):
+        """Arma la fila del stepper reutilizando chips y botones laterales."""
+        controls = []
+        if boton_izq:
+            controls.append(boton_izq)
+        controls.extend([self._chip_paso(1, "Validar"), self._chip_paso(2, "Generar")])
+        if boton_der:
+            controls.append(boton_der)
+        return controls
+
+    def _construir_contenido_step_actual(self):
+        """Resuelve contenido central según formato seleccionado y paso activo."""
+        if not self.selected_formato:
+            return ft.Column(
                 [
                     ft.Text("Debe seleccionar un formato para continuar.", size=14),
-                    ft.TextButton(content="Elegir formato", on_click=lambda e: self._open_dialog_formatos(), style=BOTON_SECUNDARIO),
+                    ft.TextButton(
+                        content="Elegir formato",
+                        on_click=lambda _e: self._open_dialog_formatos(),
+                        style=BOTON_SECUNDARIO,
+                    ),
                 ],
                 spacing=10,
             )
-        else:
-            if self.step == 1:
-                self.step_content_container.content = self._render_validar()
-            elif self.step == 2:
-                self.step_content_container.content = self._render_generar()
+        if self.step == 1:
+            return self._render_validar()
+        return self._render_generar()
 
     def _chip_paso(self, numero, texto):
         activo = self.step == numero
@@ -306,41 +354,59 @@ class GenerarXmlPage(ft.Column):
 
     # ---------- Construcción del formulario de modificación ----------
     def _build_modificar_form(self):
-        # valores por defecto: fecha/hora actuales y periodo de reporte
-        ahora = datetime.now()
-        hoy_str = ahora.strftime("%Y-%m-%d")
-        hora_str = ahora.strftime("%H:%M:%S")
-        periodo = PERIODO
-        fecha_ini_str = f"{periodo}-01-01"
-        fecha_fin_str = f"{periodo}-12-31"
-
-        def tf(label, disabled=False, options=None, value=None):
-            if options is not None:
-                return DropdownCompact(
-                    label=label,
-                    value=value,
-                    options=[ft.DropdownOption(key=v, text=v) for _, v in options.items()],
-                    width=300,
-                )
-            return ft.TextField(
-                label=label,
-                value=value,
-                disabled=disabled,
-                border_color=PINK_200,
-                label_style=ft.TextStyle(color=GREY_700),
-                width=300,
-                height=55,
-            )
-
+        """Construye controles del formulario de cabecera con valores por defecto."""
+        defaults = self._valores_default_cabecera()
         self.campos_modificar = {
-            "concepto": tf("Concepto", options={'01': "Insercion", '02': "Reemplazo"}, value="Insercion" if self.selected_formato[3] == "01" else "Reemplazo"),
-            "version": tf("Version", disabled=True, value = self.selected_formato[4]),
-            "numenvio": tf("Numero de envio", value=self.selected_formato[5]),
-            "fechaenvio": tf("Fecha de envio", value=hoy_str ),# if self.selected_formato[6] == None else self.selected_formato[6][:9]
-            "horaenvio": tf("Hora de envio", value=hora_str ),# if self.selected_formato[6] == None else self.selected_formato[6][10:]
-            "fechainicial": tf("Fecha inicial", value=fecha_ini_str),
-            "fechafinal": tf("Fecha fin", value=fecha_fin_str),
+            "concepto": self._control_modificar_dropdown(
+                "Concepto",
+                {"01": "Insercion", "02": "Reemplazo"},
+                "Insercion" if self.selected_formato[3] == "01" else "Reemplazo",
+            ),
+            "version": self._control_modificar_texto(
+                "Version",
+                defaults["version"],
+                disabled=True,
+            ),
+            "numenvio": self._control_modificar_texto("Numero de envio", defaults["numenvio"]),
+            "fechaenvio": self._control_modificar_texto("Fecha de envio", defaults["fechaenvio"]),
+            "horaenvio": self._control_modificar_texto("Hora de envio", defaults["horaenvio"]),
+            "fechainicial": self._control_modificar_texto("Fecha inicial", defaults["fechainicial"]),
+            "fechafinal": self._control_modificar_texto("Fecha fin", defaults["fechafinal"]),
         }
+
+    def _valores_default_cabecera(self) -> dict:
+        """Arma defaults de cabecera según fecha actual, periodo y formato seleccionado."""
+        ahora = datetime.now()
+        periodo = PERIODO
+        return {
+            "version": self.selected_formato[4],
+            "numenvio": self.selected_formato[5],
+            "fechaenvio": ahora.strftime("%Y-%m-%d"),
+            "horaenvio": ahora.strftime("%H:%M:%S"),
+            "fechainicial": f"{periodo}-01-01",
+            "fechafinal": f"{periodo}-12-31",
+        }
+
+    def _control_modificar_dropdown(self, label: str, options: dict, value: str) -> DropdownCompact:
+        """Construye dropdown estándar para campos de cabecera tipo lista."""
+        return DropdownCompact(
+            label=label,
+            value=value,
+            options=[ft.DropdownOption(key=v, text=v) for _, v in options.items()],
+            width=300,
+        )
+
+    def _control_modificar_texto(self, label: str, value: str, *, disabled: bool = False) -> ft.TextField:
+        """Construye textfield estándar para campos de cabecera."""
+        return ft.TextField(
+            label=label,
+            value=value,
+            disabled=disabled,
+            border_color=PINK_200,
+            label_style=ft.TextStyle(color=GREY_700),
+            width=300,
+            height=55,
+        )
 
     def _ir_a_validar(self):
         self.step = 1
@@ -365,7 +431,7 @@ class GenerarXmlPage(ft.Column):
             set_campo_error(campo, None)
         
         errores = False
-        
+
         # Validar campos obligatorios
         requeridos = {
             "concepto": "Concepto",
@@ -375,59 +441,64 @@ class GenerarXmlPage(ft.Column):
             "fechainicial": "Fecha inicial",
             "fechafinal": "Fecha final"
         }
-        
-        for key, nombre_campo in requeridos.items():
-            control = self.campos_modificar.get(key)
-            if control:
-                valor = getattr(control, "value", None) or ""
-                if not aplicar_validacion_error_text(control, valor, validar_campo_obligatorio, nombre_campo=nombre_campo):
-                    errores = True
-        
-        # Validar formato de número de envío
-        numenvio_control = self.campos_modificar.get("numenvio")
-        if numenvio_control and numenvio_control.value:
-            if not aplicar_validacion_error_text(numenvio_control, numenvio_control.value, validar_numero, tipo='int', min_val=1):
-                errores = True
-        
-        # Validar formato de fecha de envío
-        fechaenvio_control = self.campos_modificar.get("fechaenvio")
-        if fechaenvio_control and fechaenvio_control.value:
-            if not aplicar_validacion_error_text(fechaenvio_control, fechaenvio_control.value, validar_fecha):
-                errores = True
-        
-        # Validar formato de hora de envío
-        horaenvio_control = self.campos_modificar.get("horaenvio")
-        if horaenvio_control and horaenvio_control.value:
-            if not aplicar_validacion_error_text(horaenvio_control, horaenvio_control.value, validar_hora):
-                errores = True
-        
-        # Validar formato de fecha inicial
-        fechainicial_control = self.campos_modificar.get("fechainicial")
-        if fechainicial_control and fechainicial_control.value:
-            if not aplicar_validacion_error_text(fechainicial_control, fechainicial_control.value, validar_fecha):
-                errores = True
-        
-        # Validar formato de fecha final
-        fechafinal_control = self.campos_modificar.get("fechafinal")
-        if fechafinal_control and fechafinal_control.value:
-            if not aplicar_validacion_error_text(fechafinal_control, fechafinal_control.value, validar_fecha):
-                errores = True
-        
-        # Validar que fecha inicial < fecha final
-        if (fechainicial_control and fechainicial_control.value and 
-            fechafinal_control and fechafinal_control.value):
-            try:
-                fecha_ini = fechainicial_control.value
-                fecha_fin = fechafinal_control.value
-                if fecha_ini > fecha_fin:
-                    set_campo_error(fechainicial_control, "La fecha inicial debe ser anterior a la fecha final")
-                    set_campo_error(fechafinal_control, "La fecha final debe ser posterior a la fecha inicial")
-                    errores = True
-            except Exception:
-                pass  # Si hay error en la comparación, ya se validó el formato antes
-        
+
+        errores |= self._validar_campos_obligatorios(requeridos)
+        errores |= self._validar_formato_campos_modificar()
+        errores |= self._validar_rango_fechas_modificar()
+
         self._page.update()
         return not errores
+
+    def _validar_campos_obligatorios(self, requeridos: dict) -> bool:
+        """Ejecuta validación de obligatoriedad para campos del formulario."""
+        hay_errores = False
+        for key, nombre_campo in requeridos.items():
+            control = self.campos_modificar.get(key)
+            if not control:
+                continue
+            valor = getattr(control, "value", None) or ""
+            if not aplicar_validacion_error_text(control, valor, validar_campo_obligatorio, nombre_campo=nombre_campo):
+                hay_errores = True
+        return hay_errores
+
+    def _validar_formato_campos_modificar(self) -> bool:
+        """Valida formato de número, fechas y hora en campos diligenciados."""
+        hay_errores = False
+        validaciones = [
+            ("numenvio", validar_numero, {"tipo": "int", "min_val": 1}),
+            ("fechaenvio", validar_fecha, {}),
+            ("horaenvio", validar_hora, {}),
+            ("fechainicial", validar_fecha, {}),
+            ("fechafinal", validar_fecha, {}),
+        ]
+        for key, validador, kwargs in validaciones:
+            control = self.campos_modificar.get(key)
+            if not control or not control.value:
+                continue
+            if not aplicar_validacion_error_text(control, control.value, validador, **kwargs):
+                hay_errores = True
+        return hay_errores
+
+    def _validar_rango_fechas_modificar(self) -> bool:
+        """Valida que la fecha inicial no sea mayor que la fecha final."""
+        fechainicial_control = self.campos_modificar.get("fechainicial")
+        fechafinal_control = self.campos_modificar.get("fechafinal")
+        if not (
+            fechainicial_control
+            and fechainicial_control.value
+            and fechafinal_control
+            and fechafinal_control.value
+        ):
+            return False
+
+        try:
+            if fechainicial_control.value > fechafinal_control.value:
+                set_campo_error(fechainicial_control, "La fecha inicial debe ser anterior a la fecha final")
+                set_campo_error(fechafinal_control, "La fecha final debe ser posterior a la fecha inicial")
+                return True
+        except Exception:
+            return False
+        return False
 
     # ---------- Paso 1: Validar ----------
     def _render_validar(self):
@@ -442,21 +513,25 @@ class GenerarXmlPage(ft.Column):
             alignment=ft.Alignment(0, 0),
         )
 
+        self._ejecutar_validacion_async()
+        return loader_validar
+
+    def _ejecutar_validacion_async(self) -> None:
+        """Lanza validación XSD en segundo plano y refresca la vista al terminar."""
         def validar_worker():
             formato_codigo = self.selected_formato_nombre
             rows = self._generar_xml_uc.obtener_datos_identidad(formato_codigo)
             self._cache_datos_hoja = rows
-            res = self._generar_xml_uc.validar_formato_xsd(
+            resultado = self._generar_xml_uc.validar_formato_xsd(
                 formato_codigo,
                 atributos_xsd=self._cache_xsd["atributos"],
                 rows=rows,
             )
-            self._resultado_validacion = res
+            self._resultado_validacion = resultado
             self._refresh_body()
             self._page.update()
 
         self._page.run_thread(validar_worker)
-        return loader_validar
 
     def _construir_ui_validacion(self, resultado_validacion):
         if not resultado_validacion:
@@ -497,14 +572,19 @@ class GenerarXmlPage(ft.Column):
 
     def _totales_validacion(self, resultado_validacion):
         total_errores = sum(
-            len([data for data in concepto_data.get("registros", {}).values() if data.get("errores")])
+            self._contar_registros_por_llave(concepto_data.get("registros", {}), "errores")
             for concepto_data in resultado_validacion.values()
         )
         total_avisos = sum(
-            len([data for data in concepto_data.get("registros", {}).values() if data.get("avisos")])
+            self._contar_registros_por_llave(concepto_data.get("registros", {}), "avisos")
             for concepto_data in resultado_validacion.values()
         )
         return total_errores, total_avisos
+
+    @staticmethod
+    def _contar_registros_por_llave(registros: dict, llave: str) -> int:
+        """Cuenta registros que contienen una llave con datos (errores/avisos)."""
+        return sum(1 for data in registros.values() if data.get(llave))
 
     def _ordenar_conceptos_validacion(self, resultado_validacion: dict) -> list:
         """Ordena (código, datos) poniendo primero conceptos con más filas en error."""
@@ -512,7 +592,7 @@ class GenerarXmlPage(ft.Column):
         def clave(par):
             codigo, data = par
             registros = data.get("registros") or {}
-            cuenta_err = sum(1 for r in registros.values() if r.get("errores"))
+            cuenta_err = sum(1 for registro in registros.values() if registro.get("errores"))
             try:
                 orden = int(str(codigo))
             except ValueError:
@@ -532,8 +612,8 @@ class GenerarXmlPage(ft.Column):
             identidad = str(data.get("identidad", ""))
             prioridad = 0 if errores else 1
             items.append((prioridad, identidad.lower(), data))
-        items.sort(key=lambda t: (t[0], t[1]))
-        return [t[2] for t in items]
+        items.sort(key=lambda item: (item[0], item[1]))
+        return [item[2] for item in items]
 
     def _fila_resumen_validacion(self, total_errores: int, total_avisos: int) -> ft.Row:
         """
@@ -666,9 +746,9 @@ class GenerarXmlPage(ft.Column):
         """Rejilla densa y configurable; el orden visual se llena por filas (izq→der, luego abajo)."""
         filas = []
         cols = max(1, int(self.COLUMNAS_REGISTROS_VALIDACION))
-        for i in range(0, len(registros_ordenados), cols):
-            chunk = registros_ordenados[i : i + cols]
-            celdas = [self._tarjeta_registro_validacion(concepto_codigo, r) for r in chunk]
+        for inicio in range(0, len(registros_ordenados), cols):
+            chunk = registros_ordenados[inicio : inicio + cols]
+            celdas = [self._tarjeta_registro_validacion(concepto_codigo, registro) for registro in chunk]
             while len(celdas) < cols:
                 celdas.append(ft.Container(expand=True))
             filas.append(
@@ -692,44 +772,41 @@ class GenerarXmlPage(ft.Column):
         pagina = self._pagina_concepto_actual(concepto_codigo)
         if total_paginas <= 1:
             return None
+        btn_prev = self._crear_boton_paginacion_concepto(
+            icono=ft.Icons.CHEVRON_LEFT,
+            disabled=pagina <= 0,
+            on_click=lambda e, c=concepto_codigo, p=pagina: self._cambiar_pagina_concepto_validacion(c, p - 1, total_items),
+        )
+        btn_next = self._crear_boton_paginacion_concepto(
+            icono=ft.Icons.CHEVRON_RIGHT,
+            disabled=pagina >= total_paginas - 1,
+            on_click=lambda e, c=concepto_codigo, p=pagina: self._cambiar_pagina_concepto_validacion(c, p + 1, total_items),
+        )
         return ft.Row(
             [
-                ft.IconButton(
-                    icon=ft.Icons.CHEVRON_LEFT,
-                    icon_size=19,
-                    style=BOTON_SECUNDARIO_SIN,
-                    disabled=pagina <= 0,
-                    on_click=lambda e, c=concepto_codigo, p=pagina: self._cambiar_pagina_concepto_validacion(c, p - 1, total_items),
-                ),
+                btn_prev,
                 ft.Text(f"Página {pagina + 1} de {total_paginas}", size=12, color=GREY_700),
-                ft.IconButton(
-                    icon=ft.Icons.CHEVRON_RIGHT,
-                    icon_size=19,
-                    style=BOTON_SECUNDARIO_SIN,
-                    disabled=pagina >= total_paginas - 1,
-                    on_click=lambda e, c=concepto_codigo, p=pagina: self._cambiar_pagina_concepto_validacion(c, p + 1, total_items),
-                ),
+                btn_next,
             ],
             spacing=4,
             alignment=ft.MainAxisAlignment.END,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
+    @staticmethod
+    def _crear_boton_paginacion_concepto(icono, disabled: bool, on_click):
+        """Crea botones de navegación de páginas en resultados de validación."""
+        return ft.IconButton(
+            icon=icono,
+            icon_size=19,
+            style=BOTON_SECUNDARIO_SIN,
+            disabled=disabled,
+            on_click=on_click,
+        )
+
     def _bloque_concepto_validacion(self, concepto_codigo, concepto_data):
         registros_map = concepto_data.get("registros", {})
-        num_errores = 0
-        num_avisos = 0
-        total_afectados = 0
-        for r in registros_map.values():
-            tiene_err = bool(r.get("errores"))
-            tiene_avi = bool(r.get("avisos"))
-            if not (tiene_err or tiene_avi):
-                continue
-            total_afectados += 1
-            if tiene_err:
-                num_errores += 1
-            if tiene_avi:
-                num_avisos += 1
+        num_errores, num_avisos, total_afectados = self._resumen_concepto_validacion(registros_map)
 
         if total_afectados == 0:
             return ft.Container()
@@ -774,6 +851,24 @@ class GenerarXmlPage(ft.Column):
             bgcolor=ft.Colors.WHITE,
             content=ft.Column(hijos, spacing=6, tight=True),
         )
+
+    @staticmethod
+    def _resumen_concepto_validacion(registros_map: dict) -> tuple[int, int, int]:
+        """Calcula errores, avisos y total de registros afectados por concepto."""
+        num_errores = 0
+        num_avisos = 0
+        total_afectados = 0
+        for registro in registros_map.values():
+            tiene_err = bool(registro.get("errores"))
+            tiene_avi = bool(registro.get("avisos"))
+            if not (tiene_err or tiene_avi):
+                continue
+            total_afectados += 1
+            if tiene_err:
+                num_errores += 1
+            if tiene_avi:
+                num_avisos += 1
+        return num_errores, num_avisos, total_afectados
 
     def _exportar_validacion_pdf(self, resultado_validacion):
         """Genera el informe PDF de errores/avisos y abre el diálogo para guardarlo."""
@@ -844,25 +939,6 @@ class GenerarXmlPage(ft.Column):
         # 2. Validacion de fechas frente al periodo global
         #    Se asume entrada AAAA-MM-DD, que es el formato de fecha
         #    utilizado por los anexos de exgena mas recientes.
-        def parse_fecha_iso(texto):
-            partes = texto.split("-")
-            if len(partes) != 3 or any(not p.isdigit() for p in partes):
-                raise ValueError("La fecha debe estar en formato AAAA-MM-DD.")
-            ano = int(partes[0])
-            mes = int(partes[1])
-            dia = int(partes[2])
-            return ano, mes, dia
-
-        def helisa_desde_texto(nombre_campo):
-            valor = datos.get(nombre_campo, "")
-            if not valor:
-                raise ValueError(f"El campo '{nombre_campo}' es obligatorio.")
-            ano, mes, dia = parse_fecha_iso(valor)
-            try:
-                return fechaHelisa(ano, mes, dia)
-            except Exception as e:
-                raise ValueError(f"La fecha de '{nombre_campo}' no es valida: {e}")
-
         fecha_ini_periodo = FECHA_INICIAL
         fecha_fin_periodo = FECHA_FINAL
 
@@ -872,7 +948,7 @@ class GenerarXmlPage(ft.Column):
 
         # Fecha de envio
         try:
-            fecha_envio_helisa = helisa_desde_texto("fechaenvio")
+            fecha_envio_helisa = self._fecha_helisa_desde_texto(datos, "fechaenvio")
             if not (fecha_ini_periodo <= fecha_envio_helisa <= fecha_fin_periodo):
                 avisos.append(
                     "La fecha de envio esta fuera del rango del periodo configurado; "
@@ -883,7 +959,7 @@ class GenerarXmlPage(ft.Column):
 
         # Fecha inicial
         try:
-            fecha_ini_helisa = helisa_desde_texto("fechainicial")
+            fecha_ini_helisa = self._fecha_helisa_desde_texto(datos, "fechainicial")
             if fecha_ini_helisa < fecha_ini_periodo:
                 errores.append("La fecha inicial es anterior al inicio del periodo permitido.")
         except ValueError as ex:
@@ -891,7 +967,7 @@ class GenerarXmlPage(ft.Column):
 
         # Fecha final
         try:
-            fecha_fin_helisa = helisa_desde_texto("fechafinal")
+            fecha_fin_helisa = self._fecha_helisa_desde_texto(datos, "fechafinal")
             if fecha_fin_helisa > fecha_fin_periodo:
                 errores.append("La fecha final es posterior al final del periodo permitido.")
         except ValueError as ex:
@@ -903,47 +979,64 @@ class GenerarXmlPage(ft.Column):
                 errores.append("La fecha inicial no puede ser mayor que la fecha final.")
 
         # 3. Validacion basica de la hora de envio.
-        hora_txt = datos.get("horaenvio", "")
-        if not hora_txt:
-            errores.append("El campo 'Hora de envio' es obligatorio.")
-        else:
-            partes = hora_txt.split(":")
-            if len(partes) != 3 or any(not p.isdigit() for p in partes):
-                errores.append("La hora de envio debe estar en formato HH:MM:SS (por ejemplo, 09:30:00).")
-            else:
-                hh = int(partes[0])
-                mm = int(partes[1])
-                ss = int(partes[2])
-                if not (0 <= hh <= 23 and 0 <= mm <= 59 and 0 <= ss <= 59):
-                    errores.append("La hora de envio esta fuera del rango valido (00:00:00 a 23:59:59).")
+        error_hora = self._validar_hora_envio(datos.get("horaenvio", ""))
+        if error_hora:
+            errores.append(error_hora)
 
         return {"errores": errores, "avisos": avisos}
 
+    @staticmethod
+    def _parse_fecha_iso(texto: str) -> tuple[int, int, int]:
+        """Parsea fecha AAAA-MM-DD y retorna año, mes, día."""
+        partes = texto.split("-")
+        if len(partes) != 3 or any(not p.isdigit() for p in partes):
+            raise ValueError("La fecha debe estar en formato AAAA-MM-DD.")
+        return int(partes[0]), int(partes[1]), int(partes[2])
+
+    def _fecha_helisa_desde_texto(self, datos: dict, nombre_campo: str):
+        """Convierte un campo de fecha de cabecera al formato Helisa."""
+        valor = datos.get(nombre_campo, "")
+        if not valor:
+            raise ValueError(f"El campo '{nombre_campo}' es obligatorio.")
+        ano, mes, dia = self._parse_fecha_iso(valor)
+        try:
+            return fechaHelisa(ano, mes, dia)
+        except Exception as e:
+            raise ValueError(f"La fecha de '{nombre_campo}' no es valida: {e}")
+
+    @staticmethod
+    def _validar_hora_envio(hora_txt: str) -> str | None:
+        """Valida hora en formato HH:MM:SS y retorna mensaje de error o None."""
+        if not hora_txt:
+            return "El campo 'Hora de envio' es obligatorio."
+        partes = hora_txt.split(":")
+        if len(partes) != 3 or any(not p.isdigit() for p in partes):
+            return "La hora de envio debe estar en formato HH:MM:SS (por ejemplo, 09:30:00)."
+        hh = int(partes[0])
+        mm = int(partes[1])
+        ss = int(partes[2])
+        if not (0 <= hh <= 23 and 0 <= mm <= 59 and 0 <= ss <= 59):
+            return "La hora de envio esta fuera del rango valido (00:00:00 a 23:59:59)."
+        return None
+
     def _mostrar_mensaje(self, texto, duration):
         mostrar_mensaje_overlay(self._page, texto, duration, size=14)
-    
-    async def _ejecutar_guardar_unico_async_wrapper(self):
-        """
-        Wrapper async para ejecutar el guardado único desde el thread principal.
-        """
-        # Pequeña pausa para asegurar que el overlay del diálogo se limpie completamente
-        import asyncio
+
+    async def _esperar_overlay_estable(self) -> None:
+        """Da tiempo al UI thread para estabilizar overlays antes de abrir FilePicker."""
         await asyncio.sleep(0.1)
         self._page.update()
-        
+
+    async def _ejecutar_guardar_unico_async_wrapper(self):
+        """Wrapper async para ejecutar el guardado único desde el thread principal."""
+        await self._esperar_overlay_estable()
         nombre_archivo = self._nombre_archivo_temp
         xml_data = self._xmls_generados_temp[0]
         await self._abrir_filepicker_guardar(xml_data, nombre_archivo)
-    
+
     async def _ejecutar_guardar_multiples_async_wrapper(self):
-        """
-        Wrapper async para ejecutar el guardado múltiple desde el thread principal.
-        """
-        # Pequeña pausa para asegurar que el overlay del diálogo se limpie completamente
-        import asyncio
-        await asyncio.sleep(0.1)
-        self._page.update()
-        
+        """Wrapper async para ejecutar el guardado múltiple desde el thread principal."""
+        await self._esperar_overlay_estable()
         await self._guardar_multiples_archivos_async(
             self._xmls_generados_temp,
             self._concepto_codigo_temp,
@@ -955,9 +1048,7 @@ class GenerarXmlPage(ft.Column):
 
     async def _ejecutar_guardar_pdf_async_wrapper(self):
         """Wrapper async para ejecutar el guardado de PDF desde el thread principal."""
-        import asyncio
-        await asyncio.sleep(0.1)
-        self._page.update()
+        await self._esperar_overlay_estable()
         await self._abrir_filepicker_guardar_pdf(self._pdf_validacion_temp, self._pdf_validacion_nombre_temp)
 
 
@@ -1052,130 +1143,146 @@ class GenerarXmlPage(ft.Column):
             mensaje = f"Se generaron {len(xmls_generados)} archivo(s) XML. {archivos_guardados} guardados, {archivos_error} errores ({total_registros} registros)."
             self._mostrar_mensaje(mensaje, 5000)
         self._page.update()
-    
+
+    def _normalizar_concepto_codigo(self, concepto: str) -> str:
+        """Convierte etiquetas de concepto a códigos esperados por nombre de archivo."""
+        if concepto == "Insercion":
+            return "01"
+        if concepto == "Reemplazo":
+            return "02"
+        return concepto or "01"
+
+    def _construir_metadatos_archivo_xml(self, datos_cab: dict) -> dict:
+        """Prepara metadatos base para nombre de archivo XML."""
+        concepto_codigo = self._normalizar_concepto_codigo(datos_cab.get("concepto", "01"))
+        formato_codigo = str(self.selected_formato_nombre).zfill(5)
+        version = str(datos_cab.get("version", "")).zfill(2)
+        fecha_envio = datos_cab.get("fechaenvio", "")
+        año = fecha_envio[:4] if len(fecha_envio) >= 4 else str(PERIODO)
+        numenvio = str(datos_cab.get("numenvio", "")).zfill(8)
+        return {
+            "concepto_codigo": concepto_codigo,
+            "formato_codigo": formato_codigo,
+            "version": version,
+            "año": año,
+            "numenvio": numenvio,
+        }
+
+    def _programar_guardado_xml(self, xmls_generados, metadata: dict) -> None:
+        """Programa guardado único/múltiple de XML en el thread principal."""
+        self._xmls_generados_temp = xmls_generados
+        self._concepto_codigo_temp = metadata["concepto_codigo"]
+        self._formato_codigo_temp = metadata["formato_codigo"]
+        self._version_temp = metadata["version"]
+        self._año_temp = metadata["año"]
+        self._numenvio_temp = metadata["numenvio"]
+
+        if len(xmls_generados) > 1:
+            self._page.run_task(self._ejecutar_guardar_multiples_async_wrapper)
+            return
+
+        self._nombre_archivo_temp = (
+            f"Dmuisca_{metadata['concepto_codigo']}{metadata['formato_codigo']}"
+            f"{metadata['version']}{metadata['año']}{metadata['numenvio']}.xml"
+        )
+        self._page.run_task(self._ejecutar_guardar_unico_async_wrapper)
+
+    def _obtener_datos_hoja_para_generar(self):
+        """Obtiene cache de hoja preparada para generar XML si existe contexto validado."""
+        if not self._cache_datos_hoja:
+            return None
+        return self._generar_xml_uc.obtener_hoja_para_generar(
+            self.selected_formato_nombre,
+            rows=self._cache_datos_hoja,
+        )
+
+    def _generar_xml_worker(self) -> None:
+        """Ejecuta generación de XML en hilo de trabajo y agenda guardado en UI thread."""
+        try:
+            datos_cab = self._datos_cabecera()
+            self._generar_xml_uc.actualizar_formato(self.campos_modificar, self.selected_formato[1])
+            datos_hoja = self._obtener_datos_hoja_para_generar()
+            xmls_generados = self._generar_xml_uc.generar_xml_formato(
+                self.selected_formato_nombre,
+                datos_cab,
+                orden_atributos=self._cache_xsd["orden"],
+                elemento_detalle=self._cache_xsd["elemento_detalle"],
+                datos_hoja=datos_hoja,
+            )
+        except Exception as ex:
+            import traceback
+            traceback.print_exc()
+            loader_row_fin(self._page, self.loader)
+            self._mostrar_mensaje(f"Error al generar XML: {ex}", 5000)
+            return
+
+        if not xmls_generados:
+            loader_row_fin(self._page, self.loader)
+            self._mostrar_mensaje("Error: No se pudo generar ningún archivo XML.", 5000)
+            return
+
+        loader_row_fin(self._page, self.loader)
+        metadata = self._construir_metadatos_archivo_xml(datos_cab)
+        self._programar_guardado_xml(xmls_generados, metadata)
+
+    def _iniciar_generacion_xml(self) -> None:
+        """Valida formulario/cabecera y dispara generación asíncrona."""
+        if not self._puede_generar_xml():
+            return
+        loader_row_trabajo(self._page, self.loader, None, "Generando XML...")
+        self._page.run_thread(self._generar_xml_worker)
+
+    def _puede_generar_xml(self) -> bool:
+        """Consolida prevalidaciones del formulario antes de iniciar generación."""
+        if not self._campos_modificar_completos():
+            self._mostrar_mensaje("Complete los campos obligatorios antes de generar el XML.", 4444)
+            return False
+        resultado = self._validar_datos_cabecera()
+        if resultado["errores"]:
+            self._mostrar_mensaje("Hay errores en los datos. Revise y corrija antes de generar.", 5000)
+            return False
+        return True
+
+    def _obtener_cantidad_registros_cache(self) -> int:
+        """Cuenta registros que se usarán para generar XML desde cache de hoja."""
+        if not (hasattr(self, "_cache_datos_hoja") and self._cache_datos_hoja):
+            return 0
+        datos_hoja = self._generar_xml_uc.obtener_hoja_para_generar(
+            self.selected_formato_nombre,
+            rows=self._cache_datos_hoja,
+        )
+        return len(datos_hoja) if datos_hoja else 0
+
+    @staticmethod
+    def _crear_advertencia_particion_xml(cantidad_registros: int):
+        """Construye aviso cuando el volumen requiere múltiples archivos XML."""
+        num_archivos = (cantidad_registros + 4999) // 5000
+        return ft.Container(
+            content=ft.Row(
+                [
+                    ft.Icon(ft.Icons.INFO_OUTLINE, color=ft.Colors.AMBER, size=20),
+                    ft.Text(
+                        f"Se detectaron {cantidad_registros} registros. Se generarán {num_archivos} archivo(s) XML (máximo 5000 por archivo).",
+                        size=13,
+                        color=ft.Colors.AMBER_700,
+                        weight=ft.FontWeight.W_500,
+                    ),
+                ],
+                spacing=8,
+            ),
+            bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.AMBER),
+            padding=12,
+            border_radius=6,
+            border=ft.border.all(1, ft.Colors.AMBER_300),
+        )
 
     # ---------- Paso 2: Generar ----------
     def _render_generar(self):
         if not self.campos_modificar:
             self._build_modificar_form()
-        
-        def generar_xml(e):
-            if not self._campos_modificar_completos():
-                self._mostrar_mensaje("Complete los campos obligatorios antes de generar el XML.", 4444)
-                return
-            resultado = self._validar_datos_cabecera()
-            if resultado["errores"]:
-                self._mostrar_mensaje("Hay errores en los datos. Revise y corrija antes de generar.", 5000)
-                return
 
-            loader_row_trabajo(self._page, self.loader, None, "Generando XML...")
+        controles = self._controles_render_generar()
 
-            def generar_worker():
-                try:
-                    datos_cab = self._datos_cabecera()
-                    self._generar_xml_uc.actualizar_formato(
-                        self.campos_modificar, self.selected_formato[1]
-                    )
-                    
-                    datos_hoja = (
-                        self._generar_xml_uc.obtener_hoja_para_generar(
-                            self.selected_formato_nombre, rows=self._cache_datos_hoja
-                        )
-                        if self._cache_datos_hoja else None
-                    )
-                    
-                    xmls_generados = self._generar_xml_uc.generar_xml_formato(
-                        self.selected_formato_nombre,
-                        datos_cab,
-                        orden_atributos=self._cache_xsd["orden"],
-                        elemento_detalle=self._cache_xsd["elemento_detalle"],
-                        datos_hoja=datos_hoja,
-                    )
-                except Exception as ex:
-                    import traceback
-                    traceback.print_exc()
-                    loader_row_fin(self._page, self.loader)
-                    self._mostrar_mensaje(f"Error al generar XML: {ex}", 5000)
-                    return
-                
-                if not xmls_generados:
-                    loader_row_fin(self._page, self.loader)
-                    self._mostrar_mensaje("Error: No se pudo generar ningún archivo XML.", 5000)
-                    return
-
-                loader_row_fin(self._page, self.loader)
-
-                # Preparar nombres base de archivo
-                concepto_codigo = datos_cab.get("concepto", "01")
-                if concepto_codigo == "Insercion":
-                    concepto_codigo = "01"
-                elif concepto_codigo == "Reemplazo":
-                    concepto_codigo = "02"
-                formato_codigo = str(self.selected_formato_nombre).zfill(5)
-                version = str(datos_cab.get("version", "")).zfill(2)
-                fecha_envio = datos_cab.get("fechaenvio", "")
-                año = fecha_envio[:4] if len(fecha_envio) >= 4 else str(PERIODO)
-                numenvio = str(datos_cab.get("numenvio", "")).zfill(8)
-                
-                # Guardar datos para ejecutar FilePicker desde el thread principal
-                self._xmls_generados_temp = xmls_generados
-                self._concepto_codigo_temp = concepto_codigo
-                self._formato_codigo_temp = formato_codigo
-                self._version_temp = version
-                self._año_temp = año
-                self._numenvio_temp = numenvio
-                
-                # Programar ejecución del FilePicker en el thread principal usando page.run_task()
-                # Esto asegura que el FilePicker se ejecute desde el thread principal de Flet
-                if len(xmls_generados) > 1:
-                    self._page.run_task(self._ejecutar_guardar_multiples_async_wrapper)
-                else:
-                    nombre_archivo = f"Dmuisca_{concepto_codigo}{formato_codigo}{version}{año}{numenvio}.xml"
-                    self._nombre_archivo_temp = nombre_archivo
-                    self._page.run_task(self._ejecutar_guardar_unico_async_wrapper)
-
-            # Ejecutar worker en thread separado usando el método de Flet
-            self._page.run_thread(generar_worker)
-        
-        # Cantidad de registros (grupos: misma identidad + distintos valores = distintos reg)
-        cantidad_registros = 0
-        if hasattr(self, "_cache_datos_hoja") and self._cache_datos_hoja:
-            datos_hoja = self._generar_xml_uc.obtener_hoja_para_generar(
-                self.selected_formato_nombre, rows=self._cache_datos_hoja
-            )
-            cantidad_registros = len(datos_hoja) if datos_hoja else 0
-        controles = list(self.campos_modificar.values())
-        if cantidad_registros > 5000:
-            num_archivos = (cantidad_registros + 4999) // 5000
-            advertencia = ft.Container(
-                content=ft.Row(
-                    [
-                        ft.Icon(ft.Icons.INFO_OUTLINE, color=ft.Colors.AMBER, size=20),
-                        ft.Text(
-                            f"Se detectaron {cantidad_registros} registros. Se generarán {num_archivos} archivo(s) XML (máximo 5000 por archivo).",
-                            size=13,
-                            color=ft.Colors.AMBER_700,
-                            weight=ft.FontWeight.W_500,
-                        ),
-                    ],
-                    spacing=8,
-                ),
-                bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.AMBER),
-                padding=12,
-                border_radius=6,
-                border=ft.border.all(1, ft.Colors.AMBER_300),
-            )
-            controles.append(advertencia)
-        
-        controles.append(
-            ft.ElevatedButton(
-                "Generar XML",
-                icon=ft.Icons.FILE_DOWNLOAD,
-                style=BOTON_PRINCIPAL,
-                on_click=generar_xml,
-            )
-        )
-        
         return ft.Container(
             content=ft.Column(
                 spacing=12,
@@ -1186,3 +1293,19 @@ class GenerarXmlPage(ft.Column):
             alignment=ft.Alignment(0, -1),
             expand=True,
         )
+
+    def _controles_render_generar(self) -> list[ft.Control]:
+        """Compone controles del paso generar (formulario, aviso de partición y botón final)."""
+        cantidad_registros = self._obtener_cantidad_registros_cache()
+        controles = list(self.campos_modificar.values())
+        if cantidad_registros > 5000:
+            controles.append(self._crear_advertencia_particion_xml(cantidad_registros))
+        controles.append(
+            ft.ElevatedButton(
+                "Generar XML",
+                icon=ft.Icons.FILE_DOWNLOAD,
+                style=BOTON_PRINCIPAL,
+                on_click=lambda _e: self._iniciar_generacion_xml(),
+            )
+        )
+        return controles

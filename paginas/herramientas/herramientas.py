@@ -7,6 +7,13 @@ from ui.colors import PINK_100, WHITE
 from ui.buttons import BOTON_PRINCIPAL, BOTON_SECUNDARIO
 from utils.paths import IMG_PATH
 
+
+_URL_PLAYLIST_YOUTUBE = "https://www.youtube.com/playlist?list=PL2xp6IRDj-RWsVvccHn7dC8bCsMgosgrK"
+_URL_AYUDAS_HELISA = "https://helisa.com/actualizacion/informacion-exogena/"
+_ANIM_HOVER_ESC = ft.Animation(300, ft.AnimationCurve.BOUNCE_OUT)
+_ANIM_HOVER_ROT = ft.Animation(400, ft.AnimationCurve.BOUNCE_OUT)
+
+
 class HerramientasDialog:
     def __init__(self, page, container):
         self.page = page
@@ -15,8 +22,7 @@ class HerramientasDialog:
         self.usuarios_dialog = GestionUsuariosDialog(page, container=container)
 
     def hover_effect(self, e):
-        if e.data == True:
-            # Rotación aleatoria entre -0.1 y 0.1 radianes (~-6° a 6°)
+        if e.data is True:
             e.control.rotate = random.uniform(-0.1, 0.1)
             e.control.scale = 1.05
             e.control.shadow = ft.BoxShadow(
@@ -28,72 +34,72 @@ class HerramientasDialog:
             e.control.shadow = None
         e.control.update()
 
-    def open_dialog(self):
-        yutu = ft.Container(
-            content=ft.Image(src=IMG_PATH + "/Helisa-Youtube.png"),
-            on_click=lambda e: asyncio.create_task(
-                self.page.launch_url("https://www.youtube.com/playlist?list=PL2xp6IRDj-RWsVvccHn7dC8bCsMgosgrK")
-            ),
+    def _abrir_url(self, url: str) -> None:
+        asyncio.create_task(self.page.launch_url(url))
+
+    def _bloque_imagen_link(self, imagen_archivo: str, url: str) -> ft.Container:
+        """Imagen clicable que abre URL externa en el navegador predeterminado."""
+        src = f"{IMG_PATH}/{imagen_archivo}"
+        return ft.Container(
+            content=ft.Image(src=src),
+            on_click=lambda _e: self._abrir_url(url),
             on_hover=self.hover_effect,
-            animate_scale=ft.Animation(300, ft.AnimationCurve.BOUNCE_OUT),
-            animate_rotation=ft.Animation(400, ft.AnimationCurve.BOUNCE_OUT),
+            animate_scale=_ANIM_HOVER_ESC,
+            animate_rotation=_ANIM_HOVER_ROT,
             padding=10,
         )
 
-        ayudas = ft.Container(
-            content=ft.Image(src=IMG_PATH + "/Ayudas.png"),
-            on_click=lambda e: asyncio.create_task(
-                self.page.launch_url("https://helisa.com/actualizacion/informacion-exogena/")
-            ),
-            on_hover=self.hover_effect,
-            animate_scale=ft.Animation(300, ft.AnimationCurve.BOUNCE_OUT),
-            animate_rotation=ft.Animation(400, ft.AnimationCurve.BOUNCE_OUT),
-            padding=10,
-        )
-        gestion_user_btn = ft.ElevatedButton(
-            "Gestion Usuarios",
-            icon=ft.Icons.VERIFIED_USER_SHARP,
-            style=BOTON_SECUNDARIO,
-            on_click=lambda e: self.usuarios_dialog.open_dialog(),
-        )
-        parametros = ft.ElevatedButton(
-            "Parámetros", 
-            icon=ft.Icons.EDIT_ATTRIBUTES_OUTLINED,
-            on_click=lambda e: print("parámetros"),
-            style=BOTON_SECUNDARIO
-        )
-        acerca_de_btn = ft.ElevatedButton(
-            "Acerca de",
-            icon=ft.Icons.INFO_OUTLINE_ROUNDED,
-            style=BOTON_SECUNDARIO,
-            on_click=lambda e: self.acerca_de_dialog.open_dialog(),
-        )
-        logout_btn = ft.ElevatedButton(
-            "Cerrar sesión",
-            icon=ft.Icons.LOGOUT_SHARP,
-            style=BOTON_PRINCIPAL,
-            on_click=self.logout
-        )
-        columna_izquierda = ft.Column(
-            controls=[yutu, ayudas],
+    def _columna_enlaces_medios(self) -> ft.Column:
+        return ft.Column(
+            controls=[
+                self._bloque_imagen_link("Helisa-Youtube.png", _URL_PLAYLIST_YOUTUBE),
+                self._bloque_imagen_link("Ayudas.png", _URL_AYUDAS_HELISA),
+            ],
             tight=True,
             wrap=True,
             alignment=ft.MainAxisAlignment.CENTER,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         )
-        
-        columna_derecha = ft.Column(
-            controls=[gestion_user_btn, parametros, acerca_de_btn, logout_btn],
+
+    def _columna_botones_internos(self) -> ft.Column:
+        return ft.Column(
+            controls=[
+                ft.ElevatedButton(
+                    "Gestion Usuarios",
+                    icon=ft.Icons.VERIFIED_USER_SHARP,
+                    style=BOTON_SECUNDARIO,
+                    on_click=lambda _e: self.usuarios_dialog.open_dialog(),
+                ),
+                ft.ElevatedButton(
+                    "Parámetros",
+                    icon=ft.Icons.EDIT_ATTRIBUTES_OUTLINED,
+                    on_click=lambda _e: print("parámetros"),
+                    style=BOTON_SECUNDARIO,
+                ),
+                ft.ElevatedButton(
+                    "Acerca de",
+                    icon=ft.Icons.INFO_OUTLINE_ROUNDED,
+                    style=BOTON_SECUNDARIO,
+                    on_click=lambda _e: self.acerca_de_dialog.open_dialog(),
+                ),
+                ft.ElevatedButton(
+                    "Cerrar sesión",
+                    icon=ft.Icons.LOGOUT_SHARP,
+                    style=BOTON_PRINCIPAL,
+                    on_click=self.logout,
+                ),
+            ],
             tight=True,
             wrap=True,
             alignment=ft.MainAxisAlignment.CENTER,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         )
-        
+
+    def open_dialog(self):
         self.dialog = ft.AlertDialog(
             title=ft.Text("Herramientas"),
             content=ft.Row(
-                [columna_izquierda, columna_derecha],
+                [self._columna_enlaces_medios(), self._columna_botones_internos()],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             ),
             bgcolor=WHITE,
@@ -102,13 +108,11 @@ class HerramientasDialog:
 
     def logout(self, e):
         from core import session
+
         session.USUARIO_ACTUAL = None
         session.EMPRESA_ACTUAL = None
-        self.page.pop_dialog()  # Cerrar el diálogo de manera segura
+        self.page.pop_dialog()
         self.page.update()
-        # Limpiar vistas y navegar a la página de login
-        # Se hace después de cerrar el diálogo para evitar conflictos
         if self.page.views:
             self.page.views.clear()
         asyncio.create_task(self.page.push_route("/"))
-        

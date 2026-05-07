@@ -15,6 +15,26 @@ if TYPE_CHECKING:
     )
     from domain.entities.concepto_detalle_hoja_trabajo import ConceptoDetalleHojaTrabajo
 
+_PALABRAS_COLUMNA_NUMERICA = ("código", "codigo", "dígito", "digito", "país", "pais")
+_NO_VISIBLES_ESQUEMA = {
+    "formato",
+    "concepto",
+    "identidad",
+    "identidadtercero",
+    "id_concepto",
+    "número de identificación",
+    "número de identificación del beneficiario",
+    "número de identificación del tercero",
+    "número de documento de identificación",
+}
+_OCULTAR_SUBSTRINGS_ESQUEMA = (
+    "PRIMER APELLIDO",
+    "SEGUNDO APELLIDO",
+    "PRIMER NOMBRE",
+    "SEGUNDO NOMBRE",
+    "OTROS NOMBRES",
+)
+
 
 def _concepto_a_dict(concepto: Any) -> dict | None:
     """Unifica dict legacy `{codigo, formato}` y entidad `ConceptoHojaTrabajo` para consultas de atributos."""
@@ -61,7 +81,7 @@ def es_columna_numerica(nombre: str) -> bool:
     if not nombre:
         return False
     n = nombre.strip().lower()
-    return any(k in n for k in ("código", "codigo", "dígito", "digito", "país", "pais"))
+    return any(k in n for k in _PALABRAS_COLUMNA_NUMERICA)
 
 
 def es_columna_correo_o_email(nombre: str) -> bool:
@@ -84,25 +104,38 @@ def columnas_valor_concepto(
     Nombres de columna (descripción visible) para las clases indicadas.
     Por defecto incluye solo CLASE=1 (valor/monto).
     """
-    c = _concepto_a_dict(concepto)
-    if not c:
+    concepto_dict = _concepto_a_dict(concepto)
+    if not concepto_dict:
         return set()
-    out = set()
-    for a in formatos_uc.obtener_atributos_por_concepto(
-        {"codigo": str(c["codigo"]), "formato": str(c["formato"])}
+    columnas_valor = set()
+    for atributo in formatos_uc.obtener_atributos_por_concepto(
+        {"codigo": str(concepto_dict["codigo"]), "formato": str(concepto_dict["formato"])}
     ):
-        if len(a) < 4:
+        if len(atributo) < 4:
             continue
         try:
-            clase = int(a[3]) if a[3] is not None and str(a[3]).strip() != "" else None
+            clase = (
+                int(atributo[3])
+                if atributo[3] is not None and str(atributo[3]).strip() != ""
+                else None
+            )
         except (TypeError, ValueError):
             clase = None
         if clase not in clases:
             continue
-        d = (a[2] or "").strip()
-        if d:
-            out.add(d)
-    return out
+        descripcion = (atributo[2] or "").strip()
+        if descripcion:
+            columnas_valor.add(descripcion)
+    return columnas_valor
+
+
+def _titulo_normalizado(titulo: str) -> str:
+    return (titulo or "").strip().lower()
+
+
+def _titulo_en_columnas_valor(titulo: str, columnas_valor: set) -> bool:
+    t = _titulo_normalizado(titulo)
+    return bool(t and any(_titulo_normalizado(c) == t for c in columnas_valor))
 
 
 def indices_columnas_numericas(encabezados: list, columnas_valor: set) -> set:
@@ -121,9 +154,7 @@ def indices_columnas_numericas(encabezados: list, columnas_valor: set) -> set:
         if es_columna_correo_o_email(n):
             continue
         # Combinamos heurística por nombre + pertenencia explícita al set de columnas de valor
-        if es_columna_numerica(n) or (
-            n and any((c or "").strip().lower() == n.lower() for c in columnas_valor)
-        ):
+        if es_columna_numerica(n) or _titulo_en_columnas_valor(n, columnas_valor):
             indices.add(i)
     return indices
 
@@ -152,11 +183,8 @@ def calcular_anchos_columnas(
             anchos.append(82)
         else:
             n = (titulo or "").strip().upper()
-            if columnas_clase2 and any(
-                # Atributos CLASE=2 tienen prioridad en ancho para evitar choques con reglas genéricas (ej. "TIPO").
-                (c or "").strip().lower() == (titulo or "").strip().lower()
-                for c in columnas_clase2
-            ):
+            # Atributos CLASE=2 tienen prioridad para evitar choques con reglas genéricas (ej. "TIPO").
+            if _titulo_en_columnas_valor(titulo, columnas_clase2):
                 anchos.append(55)
             elif "IDENTIFICACIÓN" in n or "IDENTIFICACION" in n:
                 anchos.append(82)
@@ -170,11 +198,8 @@ def calcular_anchos_columnas(
                 anchos.append(151)
             elif "CÓDIGO" in n or "CODIGO" in n:
                 anchos.append(55)
-            elif columnas_valor and any(
-                # Si el encabezado coincide con alguna columna de valor, usamos ancho "de montos"
-                (c or "").strip().lower() == (titulo or "").lower()
-                for c in columnas_valor
-            ):
+            # Si el encabezado coincide con alguna columna de valor, usamos ancho "de montos".
+            elif _titulo_en_columnas_valor(titulo, columnas_valor):
                 anchos.append(111)
             else:
                 anchos.append(66)
@@ -194,39 +219,36 @@ def construir_esquema(
     - encabezado completo (Acciones, Identidad, ...),
     - set de columnas CLASE=1 (alineación y formato monetario de celda).
     """
-    # Campos internos que no se muestran como columnas
-    no_visibles = {"formato", "concepto", "identidad", "identidadtercero", "id_concepto", "número de identificación", "número de identificación del beneficiario", "número de identificación del tercero", "número de documento de identificación"}
-    # Atributos de nombre/apellido que ?no deben mostrarse en la grilla.
-    ocultar_substrings = (
-        "PRIMER APELLIDO",
-        "SEGUNDO APELLIDO",
-        "PRIMER NOMBRE",
-        "SEGUNDO NOMBRE",
-        "OTROS NOMBRES",
-    )
     presentes = set()
-    for r in datos.values():
+    for registro in datos.values():
         presentes.update(
-            k
-            for k in r.keys()
-            if k.lower() not in no_visibles
-            and not any(s in str(k or "").upper() for s in ocultar_substrings)
+            clave
+            for clave in registro.keys()
+            if clave.lower() not in _NO_VISIBLES_ESQUEMA
+            and not any(
+                substring in str(clave or "").upper()
+                for substring in _OCULTAR_SUBSTRINGS_ESQUEMA
+            )
         )
 
     ordenadas = []
     attrs = []
     c_payload = _concepto_a_dict(concepto_actual)
     if c_payload:
-        c = {"codigo": str(c_payload["codigo"]), "formato": str(c_payload["formato"])}
+        concepto_ref = {"codigo": str(c_payload["codigo"]), "formato": str(c_payload["formato"])}
         # Ordenamos atributos por ID (a[0]) para respetar el orden definido en la matriz del concepto
         attrs = sorted(
-            formatos_uc.obtener_atributos_por_concepto(c),
-            key=lambda a: int(a[0]) if isinstance(a[0], (int, float)) or str(a[0]).isdigit() else 0,
+            formatos_uc.obtener_atributos_por_concepto(concepto_ref),
+            key=lambda atributo: (
+                int(atributo[0])
+                if isinstance(atributo[0], (int, float)) or str(atributo[0]).isdigit()
+                else 0
+            ),
         )
-        for a in attrs:
-            d = (a[2] or "").strip()  # DESCRIPCION visible de la columna en hoja de trabajo
-            if d and d in presentes:  # Solo incluimos columnas que realmente existen en los datos cargados
-                ordenadas.append(d)
+        for atributo in attrs:
+            descripcion = (atributo[2] or "").strip()  # DESCRIPCION visible de la columna en hoja de trabajo
+            if descripcion and descripcion in presentes:  # Solo incluimos columnas que realmente existen en los datos cargados
+                ordenadas.append(descripcion)
 
     if not ordenadas:
         ordenadas = sorted(presentes)  # Fallback: si no hay definición de concepto, usar orden alfabético
@@ -333,7 +355,7 @@ def texto_celda_dato(
     - Decide alineación izquierda/derecha combinando índice + heurística de nombre.
     """
     n = nombre_col or ""
-    es_columna_valor = n and any((c or "").strip().lower() == n.strip().lower() for c in columnas_valor)
+    es_columna_valor = _titulo_en_columnas_valor(n, columnas_valor)
     if "tipo" in n.lower() and "documento" in n.lower():
         texto = obtener_nombre_tipodoc(valor) or (str(valor) if valor else "")
     elif es_columna_valor:

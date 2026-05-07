@@ -52,6 +52,59 @@ class CuentasDialog:
         self.loading_indicator.visible = False
         self._cuentas_uc = container.cuentas_uc
 
+    def _filtro_actual(self) -> str:
+        return (self.search_field.value or "").strip() if getattr(self, "search_field", None) else ""
+
+    def _consultar_cuentas(self, filtro: str):
+        if filtro:
+            return self._cuentas_uc.obtener_cuentas(
+                self.tipo_cuentas,
+                offset=self.offset,
+                limit=self.limit,
+                filtro=filtro,
+            )
+        return self._cuentas_uc.obtener_cuentas(
+            self.tipo_cuentas,
+            offset=self.offset,
+            limit=self.limit,
+        )
+
+    def _aplicar_resultado_cuentas(self, cuentas, total) -> None:
+        self.cuentas = cuentas
+        self.total_cuentas = total
+        self.cuentas_filtradas = self.cuentas.copy()
+        self._actualizar_tabla()
+
+    def _ejecutar_carga_cuentas(self, *, mensaje_loader: str, filtro: str, mensaje_error: str) -> None:
+        self.mostrar_loader(mensaje_loader)
+
+        def _worker():
+            try:
+                cuentas, total = self._consultar_cuentas(filtro)
+            except Exception as ex:
+                def _err():
+                    self.ocultar_loader()
+                    actualizar_mensaje_en_control(f"{mensaje_error}: {ex}", self.mensaje)
+
+                ejecutar_en_ui(self.page, _err)
+                return
+
+            def _ui():
+                self._aplicar_resultado_cuentas(cuentas, total)
+                self.ocultar_loader()
+
+            ejecutar_en_ui(self.page, _ui)
+
+        self.page.run_thread(_worker)
+
+    def _total_paginas(self) -> int:
+        if not self.limit:
+            return 1
+        return (self.total_cuentas + self.limit - 1) // self.limit if self.total_cuentas > 0 else 1
+
+    def _pagina_actual(self) -> int:
+        return (self.offset // self.limit) + 1 if self.limit else 1
+
     # ===================== ABRIR =====================
     def open_cuentas(self, tipo_cuentas, concepto, tglobal):
         self.concepto = concepto
@@ -60,8 +113,8 @@ class CuentasDialog:
         self.offset = 0
         
         self.seleccion_global = {
-            c["codigo"]: {"selected": True, "data": c}
-            for c in self.atributos_dialog.cuentas_seleccionadas
+            cuenta["codigo"]: {"selected": True, "data": cuenta}
+            for cuenta in self.atributos_dialog.cuentas_seleccionadas
         }
 
         self.search_field = ft.TextField(
@@ -173,42 +226,11 @@ class CuentasDialog:
 
     # ===================== CARGA =====================
     def cargar_cuentas(self):
-        self.mostrar_loader("Cargando cuentas...")
-        filtro = (self.search_field.value or "").strip() if getattr(self, "search_field", None) else ""
-
-        def _worker():
-            try:
-                if filtro:
-                    cuentas, total = self._cuentas_uc.obtener_cuentas(
-                        self.tipo_cuentas,
-                        offset=self.offset,
-                        limit=self.limit,
-                        filtro=filtro,
-                    )
-                else:
-                    cuentas, total = self._cuentas_uc.obtener_cuentas(
-                        self.tipo_cuentas,
-                        offset=self.offset,
-                        limit=self.limit,
-                    )
-            except Exception as ex:
-                def _err():
-                    self.ocultar_loader()
-                    actualizar_mensaje_en_control(f"Error cargando cuentas: {ex}", self.mensaje)
-
-                ejecutar_en_ui(self.page, _err)
-                return
-
-            def _ui():
-                self.cuentas = cuentas
-                self.total_cuentas = total
-                self.cuentas_filtradas = self.cuentas.copy()
-                self._actualizar_tabla()
-                self.ocultar_loader()
-
-            ejecutar_en_ui(self.page, _ui)
-
-        self.page.run_thread(_worker)
+        self._ejecutar_carga_cuentas(
+            mensaje_loader="Cargando cuentas...",
+            filtro=self._filtro_actual(),
+            mensaje_error="Error cargando cuentas",
+        )
 
     def _banner_prefijos_sync(self) -> None:
         sync_banner_prefijo(
@@ -319,43 +341,11 @@ class CuentasDialog:
         if nuevo_offset < 0:
             return
         self.offset = nuevo_offset
-        self.mostrar_loader("Paginando...")
-        filtro = (self.search_field.value or "").strip()
-
-        def _worker():
-            try:
-                if filtro:
-                    cuentas, total = self._cuentas_uc.obtener_cuentas(
-                        self.tipo_cuentas,
-                        offset=self.offset,
-                        limit=self.limit,
-                        filtro=filtro,
-                    )
-                else:
-                    cuentas, total = self._cuentas_uc.obtener_cuentas(
-                        self.tipo_cuentas,
-                        offset=self.offset,
-                        limit=self.limit,
-                    )
-            except Exception as e:
-                print(f"Error paginando cuentas: {e}")
-
-                def _err():
-                    self.ocultar_loader()
-
-                ejecutar_en_ui(self.page, _err)
-                return
-
-            def _ui():
-                self.cuentas = cuentas
-                self.total_cuentas = total
-                self.cuentas_filtradas = self.cuentas.copy()
-                self._actualizar_tabla()
-                self.ocultar_loader()
-
-            ejecutar_en_ui(self.page, _ui)
-
-        self.page.run_thread(_worker)
+        self._ejecutar_carga_cuentas(
+            mensaje_loader="Paginando...",
+            filtro=self._filtro_actual(),
+            mensaje_error="Error paginando cuentas",
+        )
 
     # ===================== BUSQUEDA =====================
     def _buscar_cuenta(self, e: ft.ControlEvent):
@@ -368,42 +358,11 @@ class CuentasDialog:
         self._buscar_handle = loop.call_later(0.35, lambda: self._buscar_cuenta_ejecutar(texto))
 
     def _buscar_cuenta_ejecutar(self, texto: str):
-        self.mostrar_loader("Buscando...")
-
-        def _worker():
-            try:
-                if texto:
-                    cuentas, total = self._cuentas_uc.obtener_cuentas(
-                        self.tipo_cuentas,
-                        offset=self.offset,
-                        limit=self.limit,
-                        filtro=texto,
-                    )
-                else:
-                    cuentas, total = self._cuentas_uc.obtener_cuentas(
-                        self.tipo_cuentas,
-                        offset=self.offset,
-                        limit=self.limit,
-                    )
-            except Exception as ex:
-                print(f"Error buscando cuentas: {ex}")
-
-                def _err():
-                    self.ocultar_loader()
-
-                ejecutar_en_ui(self.page, _err)
-                return
-
-            def _ui():
-                self.cuentas = cuentas
-                self.total_cuentas = total
-                self.cuentas_filtradas = self.cuentas.copy()
-                self._actualizar_tabla()
-                self.ocultar_loader()
-
-            ejecutar_en_ui(self.page, _ui)
-
-        self.page.run_thread(_worker)
+        self._ejecutar_carga_cuentas(
+            mensaje_loader="Buscando...",
+            filtro=(texto or "").strip(),
+            mensaje_error="Error buscando cuentas",
+        )
 
     # ===================== TABLA =====================
     def _actualizar_tabla(self):
@@ -414,40 +373,36 @@ class CuentasDialog:
             actualizar_mensaje_en_control("No se encontraron cuentas", self.mensaje)
         else:
             self.mensaje.visible = False
-            for c in self.cuentas_filtradas:
-                cuenta = c.get("codigo")
-                checked = self.seleccion_global.get(cuenta, {}).get("selected", False)
+            for cuenta in self.cuentas_filtradas:
+                codigo_cuenta = cuenta.get("codigo")
+                checked = self.seleccion_global.get(codigo_cuenta, {}).get("selected", False)
 
                 cb = ft.Checkbox(
                     value=checked,
-                    data=c,
+                    data=cuenta,
                     width=25,
                     active_color=PINK_400,
-                    tooltip=tooltip(TooltipId.CUENTAS_CTRL_CODIGO, codigo=str(cuenta)),
-                    on_change=lambda e, id=cuenta, data=c: self._toggle_seleccion(id, data, e.control.value),
+                    tooltip=tooltip(TooltipId.CUENTAS_CTRL_CODIGO, codigo=str(codigo_cuenta)),
+                    on_change=lambda e, id=codigo_cuenta, data=cuenta: self._toggle_seleccion(
+                        id, data, e.control.value
+                    ),
                 )
-                self.checkboxes_cuentas[cuenta] = cb
+                self.checkboxes_cuentas[codigo_cuenta] = cb
 
                 fila = ft.DataRow(
                     cells=[
                         ft.DataCell(cb),
-                        ft.DataCell(ft.Text(cuenta)),
-                        ft.DataCell(ft.Text(c.get("nombre", ""))),
-                        ft.DataCell(ft.Text(c.get("naturaleza", ""))),
+                        ft.DataCell(ft.Text(codigo_cuenta)),
+                        ft.DataCell(ft.Text(cuenta.get("nombre", ""))),
+                        ft.DataCell(ft.Text(cuenta.get("naturaleza", ""))),
                     ]
                 )
                 self.data_table.rows.append(fila)
 
         self.btn_prev.visible = not self.offset <= 0
-        # Calcular total de páginas a partir del total global
-        if self.limit:
-            total_paginas = (self.total_cuentas + self.limit - 1) // self.limit if self.total_cuentas > 0 else 1
-        else:
-            total_paginas = 1
-        pagina = (self.offset // self.limit) + 1 if self.limit else 1
-        has_next = pagina < total_paginas
-        self.btn_next.visible = has_next
-        # Footer: "Página X de Y · N" (N = total cuentas)
+        total_paginas = self._total_paginas()
+        pagina = self._pagina_actual()
+        self.btn_next.visible = pagina < total_paginas
         total = self.total_cuentas if self.total_cuentas > 0 else None
         self.pagination_text_footer.value = pagination_text_value(pagina, total_paginas, total)
         self.page.update()
@@ -464,8 +419,10 @@ class CuentasDialog:
                 subcuentas = self._cuentas_uc.obtener_subcuentas(
                     self.tipo_cuentas, cuenta_prefijo
                 )
-            except Exception as e:
-                print(f"Error al obtener/subir selección de subcuentas para {cuenta_prefijo}: {e}")
+            except Exception as exc:
+                print(
+                    f"Error al obtener/subir selección de subcuentas para {cuenta_prefijo}: {exc}"
+                )
 
                 def _err():
                     self.ocultar_loader()
@@ -477,9 +434,9 @@ class CuentasDialog:
             cuentas_a_procesar = [data] + subcuentas
 
             def _ui():
-                for c in cuentas_a_procesar:
-                    codigo = c["codigo"]
-                    self.seleccion_global[codigo] = {"selected": value, "data": c}
+                for cuenta in cuentas_a_procesar:
+                    codigo = cuenta["codigo"]
+                    self.seleccion_global[codigo] = {"selected": value, "data": cuenta}
 
                     cb = self.checkboxes_cuentas.get(codigo)
                     if cb:
@@ -494,8 +451,12 @@ class CuentasDialog:
         self.page.run_thread(_worker)
 
     # ===================== SELECCIONAR =====================
-    def seleccionar_cuentas(self, e):
-        seleccionados = [d["data"] for d in self.seleccion_global.values() if d["selected"] and d["data"]["subcuentas"] == 0]
+    def seleccionar_cuentas(self, _event):
+        seleccionados = [
+            seleccion["data"]
+            for seleccion in self.seleccion_global.values()
+            if seleccion["selected"] and seleccion["data"]["subcuentas"] == 0
+        ]
         if not seleccionados:
             actualizar_mensaje_en_control("Debe seleccionar al menos una cuenta", self.mensaje)
             return
