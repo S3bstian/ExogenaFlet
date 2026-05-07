@@ -135,8 +135,14 @@ class CartillaTercerosPage(ft.Column):
         """Inicializa fila expandible de herramientas y botón toggle."""
         self.herramientas_row = ft.Row(
             controls=[
-                ft.OutlinedButton(t, icon=i, icon_color=PINK_600, style=BOTON_SECUNDARIO, on_click=a)
-                for t, i, a in self._items_herramientas()
+                ft.OutlinedButton(
+                    titulo,
+                    icon=icono,
+                    icon_color=PINK_600,
+                    style=BOTON_SECUNDARIO,
+                    on_click=accion,
+                )
+                for titulo, icono, accion in self._items_herramientas()
             ],
             spacing=3,
             expand=False,
@@ -669,7 +675,11 @@ class CartillaTercerosPage(ft.Column):
                 on_dismiss=lambda e: self._mostrar_snackbar_dividir(),
             )
             return
-        terceros_seleccionados = [t for t in self.terceros_filtrados if t.get("identidad") in self.dividir_nombres_seleccion]
+        terceros_seleccionados = [
+            tercero
+            for tercero in self.terceros_filtrados
+            if tercero.get("identidad") in self.dividir_nombres_seleccion
+        ]
         self._cerrar_snackbar_dividir()
         self._page.update()
         self._desactivar_dividir_nombres()
