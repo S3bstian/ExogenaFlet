@@ -139,7 +139,11 @@ class TerceroDialog:
             pais_cod_int = int(pais_cod)
         except (ValueError, TypeError):
             return []
-        return [d[0] for d in DEPARTAMENTOS.values() if int(d[1]) == pais_cod_int]
+        return [
+            datos_departamento[0]
+            for datos_departamento in DEPARTAMENTOS.values()
+            if int(datos_departamento[1]) == pais_cod_int
+        ]
 
     def _opciones_municipio_inicial(self, tercero: dict) -> list:
         """Calcula opciones iniciales de municipio según departamento actual del tercero."""
@@ -150,13 +154,17 @@ class TerceroDialog:
             depto_cod_int = int(depto_cod)
         except (ValueError, TypeError):
             return []
-        return [m[1] for m in MUNICIPIOS.values() if int(m[2]) == depto_cod_int]
+        return [
+            datos_municipio[1]
+            for datos_municipio in MUNICIPIOS.values()
+            if int(datos_municipio[2]) == depto_cod_int
+        ]
 
     def _crear_controles_formulario_normal(self, tercero: dict) -> dict:
         """Construye todos los controles del diálogo normal (nuevo/editar)."""
         naturaleza = ["P. Natural", "P. Juridica"]
-        tipodocumento = [t[1][1] for t in TIPOSDOC.items()]
-        paises = [p for p in PAISES.values()]
+        tipodocumento = [datos_tipo[1] for _, datos_tipo in TIPOSDOC.items()]
+        paises = list(PAISES.values())
         return {
             "identidad": self._control_formulario_tercero(
                 tercero, "Numero Documento", "identidad", disabled=(self.modo == "editar")
