@@ -80,7 +80,7 @@ class AtributosDialog:
         self._config_cache = (
             self.tipo_acumulado.value,
             self.tipo_cuenta.value,
-            [dict(c) for c in self.cuentas_seleccionadas],
+            [dict(cuenta) for cuenta in self.cuentas_seleccionadas],
         )
 
     def _abrir_catalogo_cuentas(self, e):
@@ -128,7 +128,7 @@ class AtributosDialog:
                     configatributo = self._formatos_uc.obtener_configuracion_atributo(atributo_id)
                     tipo_acumulado = str(configatributo[0] or 0)
                     tipo_cuenta = str(configatributo[1] or 0)
-                    cuentas_a_mostrar = [dict(c) for c in configatributo[2]]
+                    cuentas_a_mostrar = [dict(cuenta) for cuenta in configatributo[2]]
                     self._config_cache = (tipo_acumulado, tipo_cuenta, cuentas_a_mostrar)
                 todos_acumulados = self._formatos_uc.obtener_forma_acumulado()
             except Exception as ex:
@@ -175,7 +175,7 @@ class AtributosDialog:
             value=tipo_cuenta,
         )
 
-        self.cuentas_seleccionadas = [dict(c) for c in cuentas_a_mostrar]
+        self.cuentas_seleccionadas = [dict(cuenta) for cuenta in cuentas_a_mostrar]
         self.cuentas_container = ft.Column(spacing=-11)
 
         self._btn_buscar_cuentas = ft.IconButton(
@@ -267,7 +267,7 @@ class AtributosDialog:
         padres_map = {}
         if es_subtipo:
             padres = self._datos_uc.obtener_padres_subtipo(None)
-            padres_map = {str(p.get("codigo")): p for p in padres}
+            padres_map = {str(padre.get("codigo")): padre for padre in padres}
 
         opciones = [] if es_subtipo else opciones_tabla
 
@@ -401,7 +401,9 @@ class AtributosDialog:
                 return
             if es_subtipo and selector_tabla.value in padres_map:
                 hijos_actuales = padres_map[selector_tabla.value].get("hijos") or []
-                padres_map[selector_tabla.value]["hijos"] = [h for h in hijos_actuales if int(h) != int(codigo)]
+                padres_map[selector_tabla.value]["hijos"] = [
+                    hijo for hijo in hijos_actuales if int(hijo) != int(codigo)
+                ]
                 padre_codigo = int(selector_tabla.value)
                 tabla_padre = (padres_map[selector_tabla.value].get("tabla") or "").strip()
                 self._datos_uc.actualizar_hijos_padre_subtipo(
@@ -456,15 +458,20 @@ class AtributosDialog:
     # ----------------- VISIBILIDAD -----------------
     def actualizar_visibilidad(self, e=None):
         visibles = self.tipo_acumulado.value not in ['0', '21', '50', '51']
-        for ctrl in [self.tipo_cuenta, self.fila_tipo_cuenta, self.fila_cuentas_titulo, self.cuentas_container]:
-            if ctrl:
-                ctrl.visible = visibles
+        for control in [
+            self.tipo_cuenta,
+            self.fila_tipo_cuenta,
+            self.fila_cuentas_titulo,
+            self.cuentas_container,
+        ]:
+            if control:
+                control.visible = visibles
         self.opciones_dialog.update()
 
     # ----------------- CUENTAS -----------------
     def recibir_cuentas(self, cuentas):
         # La selección del catálogo reemplaza completamente la selección previa.
-        self.cuentas_seleccionadas = [dict(c) for c in cuentas]
+        self.cuentas_seleccionadas = [dict(cuenta) for cuenta in cuentas]
         self._persistir_cache_actual()
         self.mostrar_cuentas_seleccionadas()
 
@@ -481,7 +488,9 @@ class AtributosDialog:
                 sw = ft.Switch(
                     value=(cuenta["valorabsoluto"] == "S"),
                     active_track_color=PINK_200,
-                    on_change=lambda e, c=cuenta: self.toggle_valorabsoluto(c, e.control.value),
+                    on_change=lambda e, cuenta_actual=cuenta: self.toggle_valorabsoluto(
+                        cuenta_actual, e.control.value
+                    ),
                     scale=0.66,
                     
                 )
@@ -490,7 +499,7 @@ class AtributosDialog:
                     icon_color=ft.Colors.RED,
                     style=BOTON_SECUNDARIO_SIN,
                     tooltip="Quitar cuenta",
-                    on_click=lambda e, c=cuenta: self.quitar_cuenta(c),
+                    on_click=lambda e, cuenta_actual=cuenta: self.quitar_cuenta(cuenta_actual),
                 )
                 fila = ft.Row(
                     [ft.Text(f"{cuenta.get('nombre')} - {cuenta.get('codigo')}", expand=True, size=14), sw, eliminar_btn],
@@ -503,12 +512,16 @@ class AtributosDialog:
         self.page.update()
 
     def quitar_cuenta(self, cuenta):
-        self.cuentas_seleccionadas = [c for c in self.cuentas_seleccionadas if c != cuenta]
+        self.cuentas_seleccionadas = [
+            cuenta_actual
+            for cuenta_actual in self.cuentas_seleccionadas
+            if cuenta_actual != cuenta
+        ]
         self._persistir_cache_actual()
         self.mostrar_cuentas_seleccionadas()
 
     def toggle_valorabsoluto(self, cuenta, estado):
-        cuenta["valorabsoluto"] = "N" if estado == False else "S"
+        cuenta["valorabsoluto"] = "N" if not estado else "S"
         self._persistir_cache_actual()
         tabla = "Cuentas_trib" if str(self.tipo_cuenta.value) == "1" else "Cuentas_cont"
         self._auth_uc.actualizar_activo(

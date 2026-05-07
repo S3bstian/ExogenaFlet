@@ -113,8 +113,8 @@ class CuentasDialog:
         self.offset = 0
         
         self.seleccion_global = {
-            c["codigo"]: {"selected": True, "data": c}
-            for c in self.atributos_dialog.cuentas_seleccionadas
+            cuenta["codigo"]: {"selected": True, "data": cuenta}
+            for cuenta in self.atributos_dialog.cuentas_seleccionadas
         }
 
         self.search_field = ft.TextField(
@@ -373,26 +373,28 @@ class CuentasDialog:
             actualizar_mensaje_en_control("No se encontraron cuentas", self.mensaje)
         else:
             self.mensaje.visible = False
-            for c in self.cuentas_filtradas:
-                cuenta = c.get("codigo")
-                checked = self.seleccion_global.get(cuenta, {}).get("selected", False)
+            for cuenta in self.cuentas_filtradas:
+                codigo_cuenta = cuenta.get("codigo")
+                checked = self.seleccion_global.get(codigo_cuenta, {}).get("selected", False)
 
                 cb = ft.Checkbox(
                     value=checked,
-                    data=c,
+                    data=cuenta,
                     width=25,
                     active_color=PINK_400,
-                    tooltip=tooltip(TooltipId.CUENTAS_CTRL_CODIGO, codigo=str(cuenta)),
-                    on_change=lambda e, id=cuenta, data=c: self._toggle_seleccion(id, data, e.control.value),
+                    tooltip=tooltip(TooltipId.CUENTAS_CTRL_CODIGO, codigo=str(codigo_cuenta)),
+                    on_change=lambda e, id=codigo_cuenta, data=cuenta: self._toggle_seleccion(
+                        id, data, e.control.value
+                    ),
                 )
-                self.checkboxes_cuentas[cuenta] = cb
+                self.checkboxes_cuentas[codigo_cuenta] = cb
 
                 fila = ft.DataRow(
                     cells=[
                         ft.DataCell(cb),
-                        ft.DataCell(ft.Text(cuenta)),
-                        ft.DataCell(ft.Text(c.get("nombre", ""))),
-                        ft.DataCell(ft.Text(c.get("naturaleza", ""))),
+                        ft.DataCell(ft.Text(codigo_cuenta)),
+                        ft.DataCell(ft.Text(cuenta.get("nombre", ""))),
+                        ft.DataCell(ft.Text(cuenta.get("naturaleza", ""))),
                     ]
                 )
                 self.data_table.rows.append(fila)
@@ -417,8 +419,10 @@ class CuentasDialog:
                 subcuentas = self._cuentas_uc.obtener_subcuentas(
                     self.tipo_cuentas, cuenta_prefijo
                 )
-            except Exception as e:
-                print(f"Error al obtener/subir selección de subcuentas para {cuenta_prefijo}: {e}")
+            except Exception as exc:
+                print(
+                    f"Error al obtener/subir selección de subcuentas para {cuenta_prefijo}: {exc}"
+                )
 
                 def _err():
                     self.ocultar_loader()
@@ -430,9 +434,9 @@ class CuentasDialog:
             cuentas_a_procesar = [data] + subcuentas
 
             def _ui():
-                for c in cuentas_a_procesar:
-                    codigo = c["codigo"]
-                    self.seleccion_global[codigo] = {"selected": value, "data": c}
+                for cuenta in cuentas_a_procesar:
+                    codigo = cuenta["codigo"]
+                    self.seleccion_global[codigo] = {"selected": value, "data": cuenta}
 
                     cb = self.checkboxes_cuentas.get(codigo)
                     if cb:
@@ -447,8 +451,12 @@ class CuentasDialog:
         self.page.run_thread(_worker)
 
     # ===================== SELECCIONAR =====================
-    def seleccionar_cuentas(self, e):
-        seleccionados = [d["data"] for d in self.seleccion_global.values() if d["selected"] and d["data"]["subcuentas"] == 0]
+    def seleccionar_cuentas(self, _event):
+        seleccionados = [
+            seleccion["data"]
+            for seleccion in self.seleccion_global.values()
+            if seleccion["selected"] and seleccion["data"]["subcuentas"] == 0
+        ]
         if not seleccionados:
             actualizar_mensaje_en_control("Debe seleccionar al menos una cuenta", self.mensaje)
             return

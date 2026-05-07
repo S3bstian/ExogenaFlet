@@ -21,12 +21,12 @@ class FormatosPage(ft.Column):
         super().__init__()
         self._page = page
         self._app = app
-        c = app.container
-        self._formatos_uc = c.formatos_uc
+        container = app.container
+        self._formatos_uc = container.formatos_uc
         self.expand = True
         self.submenus = {}
         self.dialog = None
-        self.atributos_dialog = AtributosDialog(self._page, self, c)
+        self.atributos_dialog = AtributosDialog(self._page, self, container)
         self._listview = ft.ListView(expand=True, spacing=5, padding=10, controls=[])
         self.loader = crear_loader_row("Cargando formatos...", size=SIZE_SMALL)
         self.loader.visible = False
@@ -80,15 +80,17 @@ class FormatosPage(ft.Column):
         """Reconstruye opciones de concepto en el submenú del formato."""
         titulo = submenu.controls[0]
         submenu.controls = [titulo]
-        for c in conceptos:
+        for concepto in conceptos:
             submenu.controls.append(
                 ft.TextButton(
                     content=ft.Text(
-                        f"{c['codigo']} - {c['descripcion']}",
+                        f"{concepto['codigo']} - {concepto['descripcion']}",
                         no_wrap=False,
                     ),
                     style=BOTON_SUBLISTA,
-                    on_click=lambda e, c=c: self.open_estructura(formato, c),
+                    on_click=lambda e, concepto_actual=concepto: self.open_estructura(
+                        formato, concepto_actual
+                    ),
                     margin=ft.margin.only(left=55, top=5),
                 )
             )
@@ -98,8 +100,8 @@ class FormatosPage(ft.Column):
 
     def _toggle_submenu_visible(self, nombre: str, submenu: ft.Column) -> None:
         """Alterna visibilidad del submenú objetivo y colapsa los demás."""
-        for n, s in self.submenus.items():
-            s.visible = (n == nombre and not submenu.visible)
+        for nombre_menu, submenu_menu in self.submenus.items():
+            submenu_menu.visible = nombre_menu == nombre and not submenu.visible
 
     def _mostrar_error_carga_conceptos(self, ex: Exception) -> None:
         """Muestra error de carga de conceptos con overlay finalizado."""
@@ -170,7 +172,7 @@ class FormatosPage(ft.Column):
 
     def _on_formatos_cargados(self, formatos: list) -> None:
         """Pinta listado de formatos una vez completada la consulta."""
-        self._listview.controls = [self.formato_menu(f) for f in formatos]
+        self._listview.controls = [self.formato_menu(formato) for formato in formatos]
         loader_row_fin(self._page, self.loader)
         self._page.update()
 
@@ -250,30 +252,30 @@ class FormatosPage(ft.Column):
 
             # tabla atributos
             rows = []
-            for a in atributos:
+            for atributo in atributos:
                 # Regla de negocio: CLASE=3 no tiene configuración por opciones.
-                clase_attr = a.get("Clase")
+                clase_attr = atributo.get("Clase")
                 try:
                     clase_attr = int(clase_attr) if clase_attr is not None and str(clase_attr).strip() != "" else None
                 except (TypeError, ValueError):
                     clase_attr = None
                 # En CLASE=2 también se permite configurar (DATOSESPECIFICOS).
-                if clase_attr != 3 and (clase_attr == 2 or a["Tipo"] < 1000):
+                if clase_attr != 3 and (clase_attr == 2 or atributo["Tipo"] < 1000):
                     rows.append(
                         ft.DataRow(
                             cells=[
-                                data_cell(ft.Text(a["Nombre"])),
+                                data_cell(ft.Text(atributo["Nombre"])),
                                 data_cell(
                                     ft.Row(
                                         [
-                                            ft.Text(a["Descripcion"]),
+                                            ft.Text(atributo["Descripcion"]),
                                             ft.IconButton(
                                                 icon=ft.Icons.EDIT_NOTE,
                                                 tooltip="Opciones",
                                                 style=BOTON_SECUNDARIO_SIN,
-                                                on_click=lambda e, attr=a:
+                                                on_click=lambda e, atributo_actual=atributo:
                                                     self.atributos_dialog.open_opciones_dialog(
-                                                        formato, attr, concepto, info["tglobal"]
+                                                        formato, atributo_actual, concepto, info["tglobal"]
                                                     ),
                                             ),
                                         ],
@@ -288,8 +290,8 @@ class FormatosPage(ft.Column):
                     rows.append(
                         ft.DataRow(
                             cells=[
-                                data_cell(ft.Text(a["Nombre"])),
-                                data_cell(ft.Text(a["Descripcion"])),
+                                data_cell(ft.Text(atributo["Nombre"])),
+                                data_cell(ft.Text(atributo["Descripcion"])),
                             ]
                         )
                     )
@@ -481,5 +483,7 @@ class FormatosPage(ft.Column):
     def _actualizar_estilos_seg(self, seg):
         """Actualiza estilos de los botones tipo acumulado (seg es seg_ref con .buttons)."""
         if hasattr(seg, "buttons"):
-            for b in seg.buttons:
-                b.style = BOTON_PRINCIPAL if b.data == seg.selected else BOTON_SECUNDARIO_SIN
+            for boton in seg.buttons:
+                boton.style = (
+                    BOTON_PRINCIPAL if boton.data == seg.selected else BOTON_SECUNDARIO_SIN
+                )
