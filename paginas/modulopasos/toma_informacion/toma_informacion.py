@@ -55,9 +55,9 @@ class TomaInformacionPage(ft.Column):
         self.mensaje = ft.Text(
             "", size=14, italic=True, visible=False, text_align=ft.TextAlign.CENTER
         )
-        c = app.container
-        self._obtener_conceptos_uc = c.obtener_conceptos_toma_uc
-        self._acumular_conceptos_uc = c.acumular_conceptos_toma_uc
+        container = app.container
+        self._obtener_conceptos_uc = container.obtener_conceptos_toma_uc
+        self._acumular_conceptos_uc = container.acumular_conceptos_toma_uc
 
         self.main_container = None
 
@@ -273,27 +273,27 @@ class TomaInformacionPage(ft.Column):
         self.data_table.rows.clear()
         self.checkboxes.clear()
 
-        for c in self.conceptos:
-            cid = c.id
-            checked = any(d.id == cid for d in self.seleccion_global)
+        for concepto in self.conceptos:
+            cid = concepto.id
+            checked = any(seleccionado.id == cid for seleccionado in self.seleccion_global)
             cb = ft.Checkbox(
                 value=checked,
                 active_color=PINK_200,
-                data=c,
-                on_change=lambda e, id=cid, data=c: self._toggle(id, data, e.control.value),
+                data=concepto,
+                on_change=lambda e, id=cid, data=concepto: self._toggle(id, data, e.control.value),
             )
             self.checkboxes[cid] = cb
 
-            if c.activo == "S":
+            if concepto.activo == "S":
                 self.data_table.rows.append(
                     ft.DataRow(
                         cells=[
                             ft.DataCell(cb),
-                            ft.DataCell(ft.Text(c.codigo)),
-                            ft.DataCell(ft.Text(c.formato)),
+                            ft.DataCell(ft.Text(concepto.codigo)),
+                            ft.DataCell(ft.Text(concepto.formato)),
                             ft.DataCell(
                                 ft.Text(
-                                    c.descripcion,
+                                    concepto.descripcion,
                                     style=ft.TextStyle(height=1),
                                 )
                             ),
@@ -350,21 +350,23 @@ class TomaInformacionPage(ft.Column):
         if value:
             self.seleccion_global.append(data)
         else:
-            self.seleccion_global = [d for d in self.seleccion_global if d.id != cid]
+            self.seleccion_global = [
+                seleccionado for seleccionado in self.seleccion_global if seleccionado.id != cid
+            ]
 
     def _desmarcar_todos_visibles(self) -> None:
         """Quita selección global y desmarca checkboxes de la página visible."""
         self.seleccion_global = []
-        for cb in self.checkboxes.values():
-            cb.value = False
-            cb.update()
+        for checkbox in self.checkboxes.values():
+            checkbox.value = False
+            checkbox.update()
 
     def _aplicar_seleccion_global(self, conceptos: list) -> None:
         """Aplica la lista seleccionada y refleja checks en la página actual."""
         self.seleccion_global = conceptos
-        for cb in self.checkboxes.values():
-            cb.value = True
-            cb.update()
+        for checkbox in self.checkboxes.values():
+            checkbox.value = True
+            checkbox.update()
 
     def _cargar_todos_conceptos_filtrados(self, filtro):
         """Carga lote amplio de conceptos para selección masiva."""
@@ -397,8 +399,8 @@ class TomaInformacionPage(ft.Column):
 
         ejecutar_en_ui(self._page, _ok)
 
-    def _toggle_all(self, e):
-        new_val = not all(cb.value for cb in self.checkboxes.values())
+    def _toggle_all(self, _event):
+        new_val = not all(checkbox.value for checkbox in self.checkboxes.values())
         filtro = (self.search_field.value or "").strip() or None
         if not new_val:
             self._quitar_seleccion_masiva()
@@ -497,30 +499,32 @@ class TomaInformacionPage(ft.Column):
         self._snackbar_confirm_acumular = None
         self._page.update()
 
-    def _mostrar_dialogo_resultado_acumulacion(self, r: ResultadoAcumulacion) -> None:
+    def _mostrar_dialogo_resultado_acumulacion(
+        self, resultado: ResultadoAcumulacion
+    ) -> None:
         """Diálogo modal tipo informe: compacto, ordenado y con scroll solo si el contenido lo requiere."""
-        if r.cancelado:
+        if resultado.cancelado:
             titulo, encabezado = "Acumulación cancelada", "Operación detenida; no se confirmaron cambios."
-        elif r.mensaje_error_critico:
-            titulo, encabezado = "Error en acumulación", r.mensaje_error_critico
+        elif resultado.mensaje_error_critico:
+            titulo, encabezado = "Error en acumulación", resultado.mensaje_error_critico
         else:
             titulo = "Resultado de acumulación"
             encabezado = (
-                f"Conceptos: {r.total_conceptos_solicitados} · Filas insertadas: {r.total_inserts}"
-                + ("" if r.exito else "  (con errores de inserción)")
+                f"Conceptos: {resultado.total_conceptos_solicitados} · Filas insertadas: {resultado.total_inserts}"
+                + ("" if resultado.exito else "  (con errores de inserción)")
             )
 
         adv_items = [
-            f"{a.concepto_codigo} (formato {a.formato}): {', '.join(a.cuentas)}"
-            for a in r.advertencias_sin_datos
+            f"{advertencia.concepto_codigo} (formato {advertencia.formato}): {', '.join(advertencia.cuentas)}"
+            for advertencia in resultado.advertencias_sin_datos
         ]
         # Secciones que se renderizan solo si tienen items.
         secciones: list[tuple[str, list[str]]] = [
-            ("Conceptos sin elemento de acumulación", r.conceptos_omitidos_sin_elemento),
-            ("Conceptos sin cuentas configuradas", r.conceptos_sin_cuentas_en_config),
+            ("Conceptos sin elemento de acumulación", resultado.conceptos_omitidos_sin_elemento),
+            ("Conceptos sin cuentas configuradas", resultado.conceptos_sin_cuentas_en_config),
             ("Cuentas sin información para acumular", adv_items),
-            ("Conceptos procesados sin filas nuevas en la hoja", r.conceptos_sin_filas_en_hoja),
-            ("Errores de inserción en hoja de trabajo", r.errores_insercion),
+            ("Conceptos procesados sin filas nuevas en la hoja", resultado.conceptos_sin_filas_en_hoja),
+            ("Errores de inserción en hoja de trabajo", resultado.errores_insercion),
         ]
 
         secciones_visibles = [(t, i) for t, i in secciones if i]
@@ -548,7 +552,9 @@ class TomaInformacionPage(ft.Column):
                         linea(
                             encabezado,
                             bold=True,
-                            color=PINK_600 if (r.mensaje_error_critico or not r.exito) else PINK_800,
+                            color=PINK_600
+                            if (resultado.mensaje_error_critico or not resultado.exito)
+                            else PINK_800,
                         ),
                     ],
                     spacing=3,
@@ -564,7 +570,7 @@ class TomaInformacionPage(ft.Column):
                     padding=ft.padding.only(top=4),
                     content=ft.Column(
                         [linea(titulo_sec, bold=True, color=PINK_800)]
-                        + [linea(f"  · {x}") for x in items],
+                        + [linea(f"  · {item}") for item in items],
                         spacing=3,
                         tight=True,
                     ),

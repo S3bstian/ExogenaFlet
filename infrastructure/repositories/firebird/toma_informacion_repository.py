@@ -38,7 +38,8 @@ class FirebirdTomaInformacionRepository:
             limit=limit,
             filtro=filtro,
         )
-        return [ConceptoTomaInformacion.from_mapping(r) for r in rows], total
+        conceptos = [ConceptoTomaInformacion.from_mapping(fila) for fila in rows]
+        return conceptos, total
 
     def acumular_conceptos(
         self,
@@ -50,7 +51,7 @@ class FirebirdTomaInformacionRepository:
         cancel_event: Optional[Event] = None,
     ) -> ResultadoAcumulacion:
         return acumular_conceptos_hoja_trabajo(
-            [self._legacy_concepto(c) for c in conceptos],
+            [self._legacy_concepto(concepto) for concepto in conceptos],
             loader,
             page,
             bottom_text,
