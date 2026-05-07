@@ -189,11 +189,11 @@ class GenerarXmlPage(ft.Column):
     def _open_dialog_formatos(self):
         lista_botones = [
             ft.TextButton(
-                content=f"{f[1]} - {f[2]}",
+                content=f"{formato[1]} - {formato[2]}",
                 style=BOTON_LISTA,
-                on_click=lambda e, formato=f: self._seleccionar_formato(formato),
+                on_click=lambda e, formato=formato: self._seleccionar_formato(formato),
             )
-            for f in self.formatos
+            for formato in self.formatos
         ]
 
         self.dialog = ft.AlertDialog(
@@ -592,7 +592,7 @@ class GenerarXmlPage(ft.Column):
         def clave(par):
             codigo, data = par
             registros = data.get("registros") or {}
-            cuenta_err = sum(1 for r in registros.values() if r.get("errores"))
+            cuenta_err = sum(1 for registro in registros.values() if registro.get("errores"))
             try:
                 orden = int(str(codigo))
             except ValueError:
@@ -612,8 +612,8 @@ class GenerarXmlPage(ft.Column):
             identidad = str(data.get("identidad", ""))
             prioridad = 0 if errores else 1
             items.append((prioridad, identidad.lower(), data))
-        items.sort(key=lambda t: (t[0], t[1]))
-        return [t[2] for t in items]
+        items.sort(key=lambda item: (item[0], item[1]))
+        return [item[2] for item in items]
 
     def _fila_resumen_validacion(self, total_errores: int, total_avisos: int) -> ft.Row:
         """
@@ -746,9 +746,9 @@ class GenerarXmlPage(ft.Column):
         """Rejilla densa y configurable; el orden visual se llena por filas (izq→der, luego abajo)."""
         filas = []
         cols = max(1, int(self.COLUMNAS_REGISTROS_VALIDACION))
-        for i in range(0, len(registros_ordenados), cols):
-            chunk = registros_ordenados[i : i + cols]
-            celdas = [self._tarjeta_registro_validacion(concepto_codigo, r) for r in chunk]
+        for inicio in range(0, len(registros_ordenados), cols):
+            chunk = registros_ordenados[inicio : inicio + cols]
+            celdas = [self._tarjeta_registro_validacion(concepto_codigo, registro) for registro in chunk]
             while len(celdas) < cols:
                 celdas.append(ft.Container(expand=True))
             filas.append(
