@@ -39,13 +39,13 @@ def transaccion_segura(codigo_empresa=None):
         yield (con, cur)
         con.commit()
 
-    except Exception as e:
+    except Exception as exc:
         if con:
             try:
                 con.rollback()
             except Exception as rollback_error:
                 print(f"Error al hacer rollback: {rollback_error}")
-        raise e
+        raise
 
     finally:
         if cur:
@@ -110,8 +110,8 @@ def hacer_backup_bd(codigo_empresa: int, ruta_destino: str = None) -> str:
 
         return ruta_destino
 
-    except Exception as e:
-        print(f"[ERROR] No se pudo crear backup: {e}")
+    except Exception as exc:
+        print(f"[ERROR] No se pudo crear backup: {exc}")
         raise
 
 

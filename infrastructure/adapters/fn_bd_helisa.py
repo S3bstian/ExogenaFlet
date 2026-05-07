@@ -43,14 +43,14 @@ def encriptarCadena(pCadena: str):
         Retorna una cadena encriptada para la cadena del parametro
         pCadena: Cadena a encriptar
     """
-    resultado = ''
-    for i in range(len(pCadena), 0, -1):
-        caracter = pCadena[i - 1]
+    resultado = ""
+    for indice in range(len(pCadena), 0, -1):
+        caracter = pCadena[indice - 1]
         codigo = ord(caracter)
-        if i % 2 != 0:
-            resultado += chr(codigo - i)
+        if indice % 2 != 0:
+            resultado += chr(codigo - indice)
         else:
-            resultado += chr(codigo + i)
+            resultado += chr(codigo + indice)
     return resultado
 
 
@@ -59,12 +59,14 @@ def desencriptarCadena(pCadena: str):
         Retorna una cadena desencriptado la cadena del parametro
         pCadena: Cadena a desencriptar
     """
-    resultado = ''
-    for caracter in range(len(pCadena), 0, -1):
-        if (len(pCadena) - caracter + 1) % 2 != 0:
-            resultado += chr(ord(pCadena[caracter - 1]) + (len(pCadena) - caracter + 1))
+    resultado = ""
+    longitud = len(pCadena)
+    for posicion_reversa in range(longitud, 0, -1):
+        indice_ajuste = longitud - posicion_reversa + 1
+        if indice_ajuste % 2 != 0:
+            resultado += chr(ord(pCadena[posicion_reversa - 1]) + indice_ajuste)
         else:
-            resultado += chr(ord(pCadena[caracter - 1]) - (len(pCadena) - caracter + 1))
+            resultado += chr(ord(pCadena[posicion_reversa - 1]) - indice_ajuste)
     return resultado
 
 def CNX_BDHelisa(producto: str, codigoEmpresa: int, usuario):
@@ -75,42 +77,46 @@ def CNX_BDHelisa(producto: str, codigoEmpresa: int, usuario):
     periodoGravable: El año en que se reporta.
     usuario: usuario de firebird con el que se debe hacer la conexion (HELISAADMON, SYSDBA, HELISAPUBLICO)
     """
-    rwHelisa = RW_Helisa(producto)
-    baseDatos = ""
+    rw_helisa = RW_Helisa(producto)
+    base_datos = ""
     match usuario:
         case "HELISAADMON":
-            passwordFb = chr(66) + chr(56) + chr(64) + chr(65) + chr(106) + chr(78) + chr(63) + chr(90)
+            password_fb = chr(66) + chr(56) + chr(64) + chr(65) + chr(106) + chr(78) + chr(63) + chr(90)
         case "sysdba":
-            passwordFb = rwHelisa.fb
+            password_fb = rw_helisa.fb
         case "HELISAPUBLICO":
-            passwordFb = "usuhelpu"
+            password_fb = "usuhelpu"
 
     match producto:
-        case 'NI': extensionBd = ".HGW"
-        case 'PH': extensionBd = ".HPH"
-        case 'EX': extensionBd = ".EXG"
+        case "NI":
+            extension_bd = ".HGW"
+        case "PH":
+            extension_bd = ".HPH"
+        case "EX":
+            extension_bd = ".EXG"
 
     match codigoEmpresa:
         case -2:
-            baseDatos = rwHelisa.bd + r"\\HELISAXX" + extensionBd
+            base_datos = rw_helisa.bd + r"\\HELISAXX" + extension_bd
         case -1:
-            baseDatos = rwHelisa.bd + r"\\HELISABD" + extensionBd
+            base_datos = rw_helisa.bd + r"\\HELISABD" + extension_bd
         case _:
-            baseDatos = rwHelisa.bd + r"\\HELI" + str(codigoEmpresa).zfill(2) + 'BD' + extensionBd
+            base_datos = rw_helisa.bd + r"\\HELI" + str(codigoEmpresa).zfill(2) + "BD" + extension_bd
     # Evitar saturar la consola: cada consulta abre conexión; depuración solo con EXOGENA_DEBUG_BD=1
     if os.environ.get("EXOGENA_DEBUG_BD", "").strip().lower() in ("1", "true", "yes"):
         print(f"producto:{producto}, codigo empresa: {codigoEmpresa}, usuario: {usuario}.")
     try:
-        conexion = firebirdsql.connect(host = rwHelisa.servidor,
-                                   database = baseDatos,
-                                   port = 3050,
-                                   user = usuario,
-                                   password = passwordFb,
-                                   charset = "ISO8859_1"
-                                   )
+        conexion = firebirdsql.connect(
+            host=rw_helisa.servidor,
+            database=base_datos,
+            port=3050,
+            user=usuario,
+            password=password_fb,
+            charset="ISO8859_1",
+        )
         return conexion
-    except Exception as e:
-        error_msg = f"Error inesperado al conectar a la base de datos: {str(e)}"
+    except Exception as exc:
+        error_msg = f"Error inesperado al conectar a la base de datos: {str(exc)}"
         print(f"[ERROR BD] {error_msg}")
         return None
 def RW_CrearLlaveExogena(servidor: str, bd: str, fb:str):
@@ -181,8 +187,8 @@ def crearBD_Global():
                 Empresas(bd)
                 poblar_empresas_desde_productos()
                 print(" se entro y creo dominios en la bdglobal")
-        except Exception as e:
-            print(f"no se insertaron las tablas {e}")
+        except Exception as exc:
+            print(f"no se insertaron las tablas {exc}")
     else:
         print("Ya habia bd global----------")
 
@@ -278,8 +284,8 @@ def crearBD_Particular(codigoEmpresa, producto, loader, page=None):
             pasos += 1
             _actualizar_loader()
             bd.close()
-        except Exception as e:
-            print(f"no se insertaron las tablas {e}")
+        except Exception as exc:
+            print(f"no se insertaron las tablas {exc}")
 
     else:
         print("Ya habia bd particular----------", codigoEmpresa)
@@ -312,8 +318,8 @@ class RW_Helisa:
                 self.fb = desencriptarCadena(self.fb)
                 self.existe = True
                 print("se envio key")
-        except Exception as e:
-            print(" no se abrio el key, se entra al inicializar", e)
+        except Exception as exc:
+            print(" no se abrio el key, se entra al inicializar", exc)
             self._inicializar()
 
     def _inicializar(self):
