@@ -216,19 +216,31 @@ def mostrar_activacion_empresas_pre_login(
         on_complete()
         return
 
-    c = app.container
+    container = app.container
     productos_licencia = {
-        p.strip().upper()
-        for p in str(licencia.producto or "").split(",")
-        if p.strip()
+        producto.strip().upper()
+        for producto in str(licencia.producto or "").split(",")
+        if producto.strip()
     }
     empresas = []
     if "NI" in productos_licencia:
-        for e in c.empresas_uc.obtener_empresas("NI"):
-            empresas.append({"producto": "NI", "codigo": int(e["codigo"]), "nombre": str(e["nombre"])})
+        for empresa in container.empresas_uc.obtener_empresas("NI"):
+            empresas.append(
+                {
+                    "producto": "NI",
+                    "codigo": int(empresa["codigo"]),
+                    "nombre": str(empresa["nombre"]),
+                }
+            )
     if "PH" in productos_licencia:
-        for e in c.empresas_uc.obtener_empresas("PH"):
-            empresas.append({"producto": "PH", "codigo": int(e["codigo"]), "nombre": str(e["nombre"])})
+        for empresa in container.empresas_uc.obtener_empresas("PH"):
+            empresas.append(
+                {
+                    "producto": "PH",
+                    "codigo": int(empresa["codigo"]),
+                    "nombre": str(empresa["nombre"]),
+                }
+            )
 
     if not empresas:
         page.show_dialog(
@@ -272,20 +284,22 @@ def mostrar_activacion_empresas_pre_login(
             es_permanente = clave in activas_permanentes
             seleccionada = clave in seleccion_temporal
 
-            def _toggle(_: ft.ControlEvent, e=emp) -> None:
+            def _toggle(_: ft.ControlEvent, empresa_actual=emp) -> None:
                 lic_local = uc.obtener_licencia()
                 if not lic_local:
                     return
-                k = lic_local.clave_empresa(e["producto"], e["codigo"])
-                if k in activas_permanentes:
+                clave_empresa = lic_local.clave_empresa(
+                    empresa_actual["producto"], empresa_actual["codigo"]
+                )
+                if clave_empresa in activas_permanentes:
                     return
-                if k in seleccion_temporal:
-                    seleccion_temporal.remove(k)
+                if clave_empresa in seleccion_temporal:
+                    seleccion_temporal.remove(clave_empresa)
                     refrescar()
                     return
                 if len(seleccion_temporal) >= int(lic_local.limite_empresas):
                     return
-                seleccion_temporal.add(k)
+                seleccion_temporal.add(clave_empresa)
                 refrescar()
 
             listado.controls.append(
@@ -309,7 +323,11 @@ def mostrar_activacion_empresas_pre_login(
         lic = uc.obtener_licencia()
         if not lic:
             return
-        nuevas = [k for k in seleccion_temporal if k not in activas_permanentes]
+        nuevas = [
+            clave_empresa
+            for clave_empresa in seleccion_temporal
+            if clave_empresa not in activas_permanentes
+        ]
         if len(seleccion_temporal) == 0:
             return
 
