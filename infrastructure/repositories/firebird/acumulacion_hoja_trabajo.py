@@ -33,7 +33,7 @@ SetDatosRow = Tuple[Any, ...]
 @dataclass
 class EstadoAcumulacion:
     """Acumuladores mutables del proceso global de acumulación."""
-    total_inserts: int = 0
+    total_registros: int = 0
     total_errores: List[Dict[str, Any]] = field(default_factory=list)
     identidades_unificadas_global: int = 0
     advertencias_sin_datos_map: Dict[Tuple[str, str], set] = field(default_factory=lambda: defaultdict(set))
@@ -508,20 +508,20 @@ def _registrar_error_insert(
 def _imprimir_resumen_concepto(
     concepto_codigo: Any,
     total_sets: int,
-    insert_count: int,
+    registros: int,
     inserts_detallados: int,
 ) -> None:
-    """Imprime resumen de inserciones por concepto."""
-    if insert_count > 0:
-        if inserts_detallados < insert_count:
+    """Imprime resumen de registros (identidades con inserción) por concepto."""
+    if registros > 0:
+        if inserts_detallados < registros:
             print(
-                f"[ACUMULACIÓN]   Concepto {concepto_codigo}: {total_sets} set(s) → {insert_count} "
-                f"insert(s) (detalle de los primeros {min(inserts_detallados, insert_count)})"
+                f"[ACUMULACIÓN]   Concepto {concepto_codigo}: {total_sets} set(s) → {registros} "
+                f"registro(s) (detalle de los primeros {min(inserts_detallados, registros)})"
             )
         else:
-            print(f"[ACUMULACIÓN]   Concepto {concepto_codigo}: {total_sets} set(s) → {insert_count} insert(s)")
+            print(f"[ACUMULACIÓN]   Concepto {concepto_codigo}: {total_sets} set(s) → {registros} registro(s)")
         return
-    print(f"[ACUMULACIÓN]   Concepto {concepto_codigo}: {total_sets} set(s) → 0 insert(s)")
+    print(f"[ACUMULACIÓN]   Concepto {concepto_codigo}: {total_sets} set(s) → 0 registro(s)")
 
 
 def _atributos_unicos_por_id(atributos: List[Tuple[Any, ...]], raise_if_cancel: Any) -> List[Tuple[Any, ...]]:
@@ -593,9 +593,9 @@ def _insertar_sets_concepto(
     en_ui: Any,
     raise_if_cancel: Any,
 ) -> int:
-    """Inserta filas de un concepto en HOJA_TRABAJO y retorna cantidad insertada."""
+    """Inserta filas de un concepto en HOJA_TRABAJO y retorna registros (sets con ≥1 fila insertada)."""
     total_sets = len(setsdatos)
-    insert_count = 0
+    registros_insertados = 0
     inserts_detallados = 0
     atributos_unicos = _atributos_unicos_por_id(atributos, raise_if_cancel)
 
@@ -616,7 +616,8 @@ def _insertar_sets_concepto(
             log_max_inserts_detalle=log_max_inserts_detalle,
             total_errores=total_errores,
         )
-        insert_count += insertados_set
+        if insertados_set > 0:
+            registros_insertados += 1
         inserts_detallados += detalles_set
 
         _checkpoint_progreso_insercion_sets(
@@ -628,8 +629,8 @@ def _insertar_sets_concepto(
             raise_if_cancel=raise_if_cancel,
         )
 
-    _imprimir_resumen_concepto(concepto_codigo, total_sets, insert_count, inserts_detallados)
-    return insert_count
+    _imprimir_resumen_concepto(concepto_codigo, total_sets, registros_insertados, inserts_detallados)
+    return registros_insertados
 
 
 def _imprimir_detalle_insert(
@@ -758,12 +759,12 @@ def _obtener_atributos_elemento(cur: Any, elemento_id: Any) -> List[Tuple[Any, .
 
 def _imprimir_resumen_final_acumulacion(
     total_conceptos: int,
-    total_inserts: int,
+    total_registros: int,
     identidades_unificadas_global: int,
     total_errores: List[Dict[str, Any]],
 ) -> None:
     """Imprime resumen global del proceso de acumulación."""
-    print(f"\n[ACUMULACIÓN] Completado: {total_conceptos} concepto(s), {total_inserts} insert(s)")
+    print(f"\n[ACUMULACIÓN] Completado: {total_conceptos} concepto(s), {total_registros} registro(s)")
     if identidades_unificadas_global > 0:
         print(f"[ACUMULACIÓN] {identidades_unificadas_global} identidad(es) unificada(s)")
     if total_errores:
@@ -776,7 +777,7 @@ def _imprimir_resumen_final_acumulacion(
 
 def _construir_resultado_exito(
     conceptos: List[Dict[str, Any]],
-    total_inserts: int,
+    total_registros: int,
     total_errores: List[Dict[str, Any]],
     conceptos_omitidos_sin_elemento: List[str],
     conceptos_sin_cuentas_en_config: List[str],
@@ -804,7 +805,7 @@ def _construir_resultado_exito(
 
     return ResultadoAcumulacion(
         exito=not total_errores,
-        total_inserts=total_inserts,
+        total_registros=total_registros,
         total_conceptos_solicitados=len(conceptos),
         conceptos_omitidos_sin_elemento=sorted(set(conceptos_omitidos_sin_elemento)),
         conceptos_sin_cuentas_en_config=sorted(set(conceptos_sin_cuentas_en_config)),
@@ -947,7 +948,7 @@ def _resultado_concepto_sin_elemento(concepto_codigo: Any) -> Dict[str, Any]:
     return {
         "omitido_sin_elemento": True,
         "concepto_codigo": str(concepto_codigo),
-        "insert_count": 0,
+        "registros_count": 0,
         "identidades_unificadas": 0,
     }
 
@@ -1057,7 +1058,7 @@ def _procesar_concepto_acumulacion(
         setsdatos, identidades_unificadas = _unificar_setsdatos_por_tipo(tipo_el, setsdatos)
         identidades_unificadas_count = len(identidades_unificadas)
 
-    insert_count = _insertar_sets_concepto(
+    registros_count = _insertar_sets_concepto(
         cur=cur,
         setsdatos=setsdatos,
         atributos=atributos,
@@ -1077,7 +1078,7 @@ def _procesar_concepto_acumulacion(
     return {
         "omitido_sin_elemento": False,
         "concepto_codigo": str(concepto_codigo),
-        "insert_count": insert_count,
+        "registros_count": registros_count,
         "identidades_unificadas": identidades_unificadas_count,
         "sin_cuentas_config": sin_cuentas_config,
     }
@@ -1097,11 +1098,11 @@ def _acumular_resultado_concepto(
     if resultado_concepto["sin_cuentas_config"]:
         conceptos_sin_cuentas_en_config.append(resultado_concepto["concepto_codigo"])
 
-    insert_count = resultado_concepto["insert_count"]
-    if insert_count == 0 and len(conceptos_sin_filas_en_hoja) < 40:
+    registros_count = resultado_concepto["registros_count"]
+    if registros_count == 0 and len(conceptos_sin_filas_en_hoja) < 40:
         conceptos_sin_filas_en_hoja.append(resultado_concepto["concepto_codigo"])
 
-    return resultado_concepto["identidades_unificadas"], insert_count
+    return resultado_concepto["identidades_unificadas"], registros_count
 
 
 def _codigo_concepto_en_proceso(concepto_en_proceso: Optional[Dict[str, Any]]) -> Any:
@@ -1186,14 +1187,14 @@ def _procesar_conceptos_en_lote(
             en_ui=en_ui,
             raise_if_cancel=raise_if_cancel,
         )
-        identidades_unificadas, insert_count = _acumular_resultado_concepto(
+        identidades_unificadas, registros_count = _acumular_resultado_concepto(
             resultado_concepto=resultado_concepto,
             conceptos_omitidos_sin_elemento=estado.conceptos_omitidos_sin_elemento,
             conceptos_sin_cuentas_en_config=estado.conceptos_sin_cuentas_en_config,
             conceptos_sin_filas_en_hoja=estado.conceptos_sin_filas_en_hoja,
         )
         estado.identidades_unificadas_global += identidades_unificadas
-        estado.total_inserts += insert_count
+        estado.total_registros += registros_count
     return len(conceptos), concepto_en_proceso
 
 
@@ -1239,13 +1240,13 @@ def _construir_resultado_final_exitoso(
     """Imprime resumen final y devuelve DTO de éxito total/parcial."""
     _imprimir_resumen_final_acumulacion(
         total_conceptos=total_conceptos,
-        total_inserts=estado.total_inserts,
+        total_registros=estado.total_registros,
         identidades_unificadas_global=estado.identidades_unificadas_global,
         total_errores=estado.total_errores,
     )
     return _construir_resultado_exito(
         conceptos=conceptos,
-        total_inserts=estado.total_inserts,
+        total_registros=estado.total_registros,
         total_errores=estado.total_errores,
         conceptos_omitidos_sin_elemento=estado.conceptos_omitidos_sin_elemento,
         conceptos_sin_cuentas_en_config=estado.conceptos_sin_cuentas_en_config,

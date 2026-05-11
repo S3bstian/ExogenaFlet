@@ -510,7 +510,7 @@ class TomaInformacionPage(ft.Column):
         else:
             titulo = "Resultado de acumulación"
             encabezado = (
-                f"Conceptos: {resultado.total_conceptos_solicitados} · Filas insertadas: {resultado.total_inserts}"
+                f"Conceptos: {resultado.total_conceptos_solicitados} · Registros: {resultado.total_registros}"
                 + ("" if resultado.exito else "  (con errores de inserción)")
             )
 

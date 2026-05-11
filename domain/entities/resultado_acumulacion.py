@@ -21,7 +21,7 @@ class ResultadoAcumulacion:
 
     cancelado: bool = False
     exito: bool = False
-    total_inserts: int = 0
+    total_registros: int = 0
     total_conceptos_solicitados: int = 0
     conceptos_omitidos_sin_elemento: List[str] = field(default_factory=list)
     conceptos_sin_cuentas_en_config: List[str] = field(default_factory=list)
